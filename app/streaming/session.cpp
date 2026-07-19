@@ -2198,6 +2198,36 @@ void Session::openFileTransferWindow()
     updateFileMappingMenuState();
 }
 
+void Session::handleStreamWindowFileDrop(const QString& localPath)
+{
+    if (m_IsFullScreen) {
+        showStreamingToast(
+                tr("Direct file drop is available in windowed mode."),
+                3000);
+        return;
+    }
+    if (localPath.isEmpty()) {
+        return;
+    }
+    if (m_FileMappingState == OverlayMenuPanel::FileMappingState::Unavailable ||
+        m_FileMappingState == OverlayMenuPanel::FileMappingState::Error) {
+        showStreamingToast(
+                tr("Host file transfer is not available."),
+                3000);
+        return;
+    }
+
+    // Reuse the file-manager worker and queue so dropped files get the same
+    // authentication, conflict policy, progress UI, and cancellation behavior.
+    openFileTransferWindow();
+    if (m_FileTransferWindow != nullptr) {
+        m_FileTransferWindow->queueExternalUpload(localPath);
+        showStreamingToast(
+                tr("Added dropped item to the file transfer queue."),
+                2000);
+    }
+}
+
 void Session::updateFileMappingMenuState()
 {
     if (m_MenuPanel) {
@@ -3714,6 +3744,16 @@ void Session::exec()
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Quit event received");
             goto DispatchDeferredCleanup;
+
+        case SDL_DROPFILE: {
+            // SDL owns drop.file and requires SDL_free() after conversion.
+            const QString localPath = event.drop.file != nullptr
+                    ? QString::fromUtf8(event.drop.file)
+                    : QString();
+            SDL_free(event.drop.file);
+            handleStreamWindowFileDrop(localPath);
+            break;
+        }
 
         case SDL_USEREVENT:
             switch (event.user.code) {

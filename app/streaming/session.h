@@ -298,6 +298,7 @@ private:
     void processFileMappingTransferEvents();
     void cleanupFileMappingMount();
     void openFileTransferWindow();
+    void handleStreamWindowFileDrop(const QString& localPath);
     void startFileMappingSmokeProbe();
 
     static

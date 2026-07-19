@@ -321,12 +321,40 @@ FileMappingClient::RpcResult FileMappingClient::read(const QString& mappingId,
 
 FileMappingClient::RpcResult FileMappingClient::mkdir(const QString& mappingId,
                                                       const QString& path,
+                                                      const QString& conflictPolicy,
                                                       int timeoutMs)
 {
     return sendRpc({
         { QStringLiteral("type"), QStringLiteral("mkdir") },
         { QStringLiteral("mapping"), mappingId },
-        { QStringLiteral("path"), path }
+        { QStringLiteral("path"), path },
+        { QStringLiteral("conflict_policy"), conflictPolicy }
+    }, timeoutMs);
+}
+
+FileMappingClient::RpcResult FileMappingClient::rename(const QString& mappingId,
+                                                       const QString& path,
+                                                       const QString& destinationPath,
+                                                       int timeoutMs)
+{
+    return sendRpc({
+        { QStringLiteral("type"), QStringLiteral("rename") },
+        { QStringLiteral("mapping"), mappingId },
+        { QStringLiteral("path"), path },
+        { QStringLiteral("destination_path"), destinationPath }
+    }, timeoutMs);
+}
+
+FileMappingClient::RpcResult FileMappingClient::remove(const QString& mappingId,
+                                                       const QString& path,
+                                                       bool recursive,
+                                                       int timeoutMs)
+{
+    return sendRpc({
+        { QStringLiteral("type"), QStringLiteral("delete") },
+        { QStringLiteral("mapping"), mappingId },
+        { QStringLiteral("path"), path },
+        { QStringLiteral("recursive"), recursive }
     }, timeoutMs);
 }
 
@@ -338,6 +366,7 @@ FileMappingClient::RpcResult FileMappingClient::write(const QString& mappingId,
                                                       const QByteArray& data,
                                                       bool begin,
                                                       bool complete,
+                                                      const QString& conflictPolicy,
                                                       int timeoutMs)
 {
     return sendRpc({
@@ -349,6 +378,7 @@ FileMappingClient::RpcResult FileMappingClient::write(const QString& mappingId,
         { QStringLiteral("total_size"), static_cast<double>(totalSize) },
         { QStringLiteral("begin"), begin },
         { QStringLiteral("complete"), complete },
+        { QStringLiteral("conflict_policy"), conflictPolicy },
         { QStringLiteral("data"), QString::fromLatin1(data.toBase64()) }
     }, timeoutMs);
 }

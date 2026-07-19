@@ -1,8 +1,10 @@
 #include "filetransferwindow.h"
 
 #include <algorithm>
+#include <limits>
 
 #include <QCoreApplication>
+#include <QClipboard>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
@@ -14,14 +16,16 @@
 #include <QGuiApplication>
 #include <QHash>
 #include <QImage>
+#include <QInputMethod>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QSaveFile>
 #include <QScreen>
 #include <QStyleHints>
-#include <QTemporaryFile>
 #include <QUrl>
 #include <QUuid>
 #include <QWheelEvent>
@@ -35,6 +39,7 @@
 #endif
 
 #include "filemappingprotocoladapter.h"
+#include "settings/streamingpreferences.h"
 
 namespace {
 constexpr int kTransferTimeoutMs = 10000;
@@ -42,12 +47,44 @@ constexpr quint32 kTransferChunkBytes = 256U * 1024U;
 constexpr int kMargin = 18;
 constexpr int kHeaderHeight = 42;
 constexpr int kPathHeight = 38;
-constexpr int kRowsTop = 92;
+constexpr int kRowsTop = 130;
 constexpr int kStatusHeight = 48;
 constexpr int kCenterWidth = 116;
 constexpr int kColumnHeaderHeight = 30;
 constexpr int kRowHeight = 36;
 constexpr int kIconSize = 22;
+constexpr int kActionCount = 4;
+
+FileMapping::ConflictPolicy conflictPolicyFromValue(int value)
+{
+    return value == static_cast<int>(StreamingPreferences::FTCP_OVERWRITE)
+            ? FileMapping::ConflictPolicy::Overwrite
+            : FileMapping::ConflictPolicy::KeepBoth;
+}
+
+QString uniqueLocalSiblingPath(const QString& requested)
+{
+    if (!QFileInfo::exists(requested)) {
+        return requested;
+    }
+
+    const QFileInfo info(requested);
+    const QString directory = info.absolutePath();
+    const QString suffix = info.isDir() || info.suffix().isEmpty()
+            ? QString()
+            : QStringLiteral(".") + info.suffix();
+    const QString base = info.isDir() || info.completeBaseName().isEmpty()
+            ? info.fileName()
+            : info.completeBaseName();
+    for (int index = 1; index < std::numeric_limits<int>::max(); ++index) {
+        const QString candidate = QDir(directory).filePath(
+                QStringLiteral("%1 (%2)%3").arg(base).arg(index).arg(suffix));
+        if (!QFileInfo::exists(candidate)) {
+            return candidate;
+        }
+    }
+    return QString();
+}
 
 QImage fileIcon(const QString& path,
                 const QString& name,
@@ -234,6 +271,10 @@ QString errorMessage(const FileMapping::Error& error)
         return QCoreApplication::translate(
                 "FileTransferWindow",
                 "The remote drive is read-only and cannot accept uploads.");
+    case FileMapping::ErrorKind::Conflict:
+        return QCoreApplication::translate(
+                "FileTransferWindow",
+                "An item with the same name already exists.");
     case FileMapping::ErrorKind::Cancelled:
         return QCoreApplication::translate(
                 "FileTransferWindow",
@@ -322,6 +363,8 @@ void FileTransferWorker::initialize()
         item.insert(QStringLiteral("writable"),
                     mapping.mode == QStringLiteral("readwrite") &&
                     mapping.capabilities.contains(QStringLiteral("write")));
+        item.insert(QStringLiteral("deletable"),
+                    mapping.capabilities.contains(QStringLiteral("delete")));
         mappings.append(item);
     }
     emit remoteReady(mappings, QString());
@@ -359,6 +402,7 @@ void FileTransferWorker::browseRemote(const QString& mappingId, const QString& p
 bool FileTransferWorker::uploadFile(const QString& localPath,
                                     const QString& mappingId,
                                     const QString& remotePath,
+                                    int conflictPolicy,
                                     QString& error)
 {
     QFile file(localPath);
@@ -369,6 +413,7 @@ bool FileTransferWorker::uploadFile(const QString& localPath,
 
     const quint64 total = static_cast<quint64>(file.size());
     const QString uploadId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString uploadPath = remotePath;
     quint64 offset = 0;
     bool first = true;
 
@@ -385,13 +430,14 @@ bool FileTransferWorker::uploadFile(const QString& localPath,
         }
         const bool complete = offset + static_cast<quint64>(chunk.size()) >= total;
         const FileMapping::WriteResult result = m_Client->write(mappingId,
-                                                               remotePath,
+                                                               uploadPath,
                                                                uploadId,
                                                                offset,
                                                                total,
                                                                chunk,
                                                                first,
                                                                complete,
+                                                               conflictPolicyFromValue(conflictPolicy),
                                                                kTransferTimeoutMs);
         if (!result.ok()) {
             if (connectionError(result.error)) {
@@ -402,6 +448,9 @@ bool FileTransferWorker::uploadFile(const QString& localPath,
         }
 
         offset += static_cast<quint64>(chunk.size());
+        // Keep all following chunks attached to the actual "(n)" destination
+        // selected atomically by Sunshine.
+        uploadPath = result.actualPath;
         first = false;
         emit transferProgress(
                 tr("Uploading %1").arg(QFileInfo(localPath).fileName()),
@@ -415,6 +464,7 @@ bool FileTransferWorker::uploadFile(const QString& localPath,
 bool FileTransferWorker::uploadItem(const QString& localPath,
                                     const QString& mappingId,
                                     const QString& remotePath,
+                                    int conflictPolicy,
                                     QString& error)
 {
     if (m_Cancelled.load()) {
@@ -428,19 +478,24 @@ bool FileTransferWorker::uploadItem(const QString& localPath,
         return false;
     }
     if (info.isFile()) {
-        return uploadFile(localPath, mappingId, remotePath, error);
+        return uploadFile(
+                localPath, mappingId, remotePath, conflictPolicy, error);
     }
     if (!info.isDir()) {
         error = tr("Unsupported local item: %1").arg(localPath);
         return false;
     }
 
-    const FileMapping::Error mkdirError = m_Client->mkdir(mappingId, remotePath, kTransferTimeoutMs);
-    if (!mkdirError.ok()) {
-        if (connectionError(mkdirError)) {
+    const FileMapping::PathResult mkdirResult = m_Client->mkdir(
+            mappingId,
+            remotePath,
+            conflictPolicyFromValue(conflictPolicy),
+            kTransferTimeoutMs);
+    if (!mkdirResult.ok()) {
+        if (connectionError(mkdirResult.error)) {
             m_Client.reset();
         }
-        error = errorMessage(mkdirError);
+        error = errorMessage(mkdirResult.error);
         return false;
     }
 
@@ -450,7 +505,8 @@ bool FileTransferWorker::uploadItem(const QString& localPath,
     for (const QFileInfo& child : children) {
         if (!uploadItem(child.absoluteFilePath(),
                         mappingId,
-                        remoteJoin(remotePath, child.fileName()),
+                        remoteJoin(mkdirResult.actualPath, child.fileName()),
+                        conflictPolicy,
                         error)) {
             return false;
         }
@@ -460,7 +516,8 @@ bool FileTransferWorker::uploadItem(const QString& localPath,
 
 void FileTransferWorker::upload(const QString& localPath,
                                 const QString& mappingId,
-                                const QString& remoteDirectory)
+                                const QString& remoteDirectory,
+                                int conflictPolicy)
 {
     QString error;
     if (!ensureConnected(error)) {
@@ -478,35 +535,10 @@ void FileTransferWorker::upload(const QString& localPath,
     }
 
     const QString remotePath = remoteJoin(remoteDirectory, source.fileName());
-    // Check the parent directory instead of probing the destination with stat.
-    // Early full-disk Sunshine builds incorrectly closed the WebSocket after a
-    // valid stat/not_found response, so the following write saw a dead
-    // connection. Listing preserves the no-overwrite guarantee and remains
-    // compatible with those hosts.
-    const FileMapping::ListResult destinationDirectory =
-            m_Client->list(mappingId, remoteDirectory, kTransferTimeoutMs);
-    if (!destinationDirectory.ok()) {
-        if (connectionError(destinationDirectory.error)) {
-            m_Client.reset();
-        }
-        emit transferFinished(false, errorMessage(destinationDirectory.error));
-        return;
-    }
-    const bool destinationExists = std::any_of(
-            destinationDirectory.entries.cbegin(),
-            destinationDirectory.entries.cend(),
-            [&source](const FileMapping::RemoteEntry& entry) {
-                return entry.displayName.compare(source.fileName(), Qt::CaseInsensitive) == 0;
-            });
-    if (destinationExists) {
-        emit transferFinished(
-                false,
-                tr("\"%1\" already exists on the host. Existing files will not be overwritten.")
-                        .arg(source.fileName()));
-        return;
-    }
-
-    if (uploadItem(localPath, mappingId, remotePath, error)) {
+    // Collision handling lives on Sunshine so KeepBoth remains race-free when
+    // multiple clients upload the same name at once.
+    if (uploadItem(
+                localPath, mappingId, remotePath, conflictPolicy, error)) {
         emit transferFinished(
                 true,
                 tr("Uploaded \"%1\" to the host.").arg(source.fileName()));
@@ -536,9 +568,8 @@ bool FileTransferWorker::downloadFile(const QString& mappingId,
 
     const QFileInfo targetInfo(localPath);
     QDir().mkpath(targetInfo.absolutePath());
-    QTemporaryFile temporary(QDir(targetInfo.absolutePath())
-                                    .filePath(QStringLiteral(".moonlight-download-XXXXXX.part")));
-    if (!temporary.open()) {
+    QSaveFile target(localPath);
+    if (!target.open(QIODevice::WriteOnly)) {
         error = tr("Could not create a temporary download file in %1.")
                         .arg(targetInfo.absolutePath());
         return false;
@@ -570,7 +601,7 @@ bool FileTransferWorker::downloadFile(const QString& mappingId,
             error = tr("The host returned incomplete file data.");
             return false;
         }
-        if (temporary.write(result.data) != result.data.size()) {
+        if (target.write(result.data) != result.data.size()) {
             error = tr("Could not write the local file: %1").arg(localPath);
             return false;
         }
@@ -581,27 +612,15 @@ bool FileTransferWorker::downloadFile(const QString& mappingId,
                 total);
     }
 
-    temporary.flush();
-    temporary.close();
-    if (QFileInfo::exists(localPath)) {
-        error = tr("\"%1\" already exists on this computer. Existing files will not be overwritten.")
-                        .arg(targetInfo.fileName());
-        return false;
-    }
-
-    // On Windows, QTemporaryFile retains ownership of its native handle after
-    // close(). Renaming it through a second QFile instance fails with a sharing
-    // violation. Rename through the owning object so Qt can safely commit the
-    // completed download, including paths containing Chinese characters.
-    if (!temporary.rename(localPath)) {
-        const QString renameError = temporary.errorString();
+    // QSaveFile commits by atomically replacing an existing regular file. This
+    // gives explicit Overwrite transfers the same transactional guarantee as
+    // Sunshine uploads and still handles Chinese paths on Windows.
+    if (!target.commit()) {
+        const QString renameError = target.errorString();
         error = tr("Could not save the downloaded file: %1 (%2)")
                         .arg(localPath, renameError);
         return false;
     }
-    // QTemporaryFile keeps auto-remove enabled after a successful rename.
-    // Disable it only now, so failures still clean up the temporary file.
-    temporary.setAutoRemove(false);
     return true;
 }
 
@@ -619,7 +638,7 @@ bool FileTransferWorker::downloadItem(const QString& mappingId,
         return downloadFile(mappingId, remotePath, localPath, error);
     }
 
-    if (!QDir().mkdir(localPath)) {
+    if (!QDir().mkpath(localPath)) {
         error = tr("Could not create the local folder: %1").arg(localPath);
         return false;
     }
@@ -647,7 +666,8 @@ bool FileTransferWorker::downloadItem(const QString& mappingId,
 void FileTransferWorker::download(const QString& mappingId,
                                   const QString& remotePath,
                                   bool directory,
-                                  const QString& localDirectory)
+                                  const QString& localDirectory,
+                                  int conflictPolicy)
 {
     QString error;
     if (!ensureConnected(error)) {
@@ -657,13 +677,32 @@ void FileTransferWorker::download(const QString& mappingId,
 
     m_Cancelled.store(false);
     const QString name = QFileInfo(remotePath).fileName();
-    const QString localPath = QDir(localDirectory).filePath(name);
+    QString localPath = QDir(localDirectory).filePath(name);
+    bool destinationExisted = QFileInfo::exists(localPath);
+    if (destinationExisted &&
+        conflictPolicyFromValue(conflictPolicy) ==
+                FileMapping::ConflictPolicy::KeepBoth) {
+        localPath = uniqueLocalSiblingPath(localPath);
+        if (localPath.isEmpty()) {
+            emit transferFinished(
+                    false,
+                    tr("Could not allocate a unique local name for \"%1\".")
+                            .arg(name));
+            return;
+        }
+        // The suffixed destination is new even though the originally
+        // requested name existed.
+        destinationExisted = false;
+    }
     if (QFileInfo::exists(localPath)) {
-        emit transferFinished(
-                false,
-                tr("\"%1\" already exists on this computer. Existing files will not be overwritten.")
-                        .arg(name));
-        return;
+        const QFileInfo existing(localPath);
+        if (existing.isDir() != directory) {
+            emit transferFinished(
+                    false,
+                    tr("Cannot overwrite \"%1\" because the existing item has a different type.")
+                            .arg(name));
+            return;
+        }
     }
 
     if (downloadItem(mappingId, remotePath, directory, localPath, error)) {
@@ -672,11 +711,120 @@ void FileTransferWorker::download(const QString& mappingId,
                 tr("Downloaded \"%1\" to this computer.").arg(name));
     }
     else {
-        if (directory) {
+        // Never remove a pre-existing destination after a failed merge. Only a
+        // fresh KeepBoth directory created by this transfer is safe to clean.
+        if (directory && !destinationExisted) {
             QDir(localPath).removeRecursively();
         }
         emit transferFinished(false, error);
     }
+}
+
+void FileTransferWorker::createRemoteFile(const QString& mappingId,
+                                          const QString& remotePath,
+                                          int conflictPolicy)
+{
+    QString error;
+    if (!ensureConnected(error)) {
+        emit operationFinished(false, error);
+        return;
+    }
+
+    // Empty files use the normal transactional write path, which keeps the
+    // protocol surface small and applies the same path validation as uploads.
+    const QString uploadId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const FileMapping::WriteResult result = m_Client->write(
+            mappingId,
+            remotePath,
+            uploadId,
+            0,
+            0,
+            QByteArray(),
+            true,
+            true,
+            conflictPolicyFromValue(conflictPolicy),
+            kTransferTimeoutMs);
+    if (!result.ok()) {
+        if (connectionError(result.error)) {
+            m_Client.reset();
+        }
+        emit operationFinished(false, errorMessage(result.error));
+        return;
+    }
+    emit operationFinished(true, tr("Created file \"%1\".")
+                                    .arg(QFileInfo(result.actualPath).fileName()));
+}
+
+void FileTransferWorker::createRemoteFolder(const QString& mappingId,
+                                            const QString& remotePath,
+                                            int conflictPolicy)
+{
+    QString error;
+    if (!ensureConnected(error)) {
+        emit operationFinished(false, error);
+        return;
+    }
+
+    const FileMapping::PathResult result = m_Client->mkdir(
+            mappingId,
+            remotePath,
+            conflictPolicyFromValue(conflictPolicy),
+            kTransferTimeoutMs);
+    if (!result.ok()) {
+        if (connectionError(result.error)) {
+            m_Client.reset();
+        }
+        emit operationFinished(false, errorMessage(result.error));
+        return;
+    }
+    emit operationFinished(true, tr("Created folder \"%1\".")
+                                    .arg(QFileInfo(result.actualPath).fileName()));
+}
+
+void FileTransferWorker::renameRemote(const QString& mappingId,
+                                      const QString& remotePath,
+                                      const QString& destinationPath)
+{
+    QString error;
+    if (!ensureConnected(error)) {
+        emit operationFinished(false, error);
+        return;
+    }
+
+    const FileMapping::PathResult result = m_Client->rename(
+            mappingId, remotePath, destinationPath, kTransferTimeoutMs);
+    if (!result.ok()) {
+        if (connectionError(result.error)) {
+            m_Client.reset();
+        }
+        emit operationFinished(false, errorMessage(result.error));
+        return;
+    }
+    emit operationFinished(true, tr("Renamed item to \"%1\".")
+                                    .arg(QFileInfo(destinationPath).fileName()));
+}
+
+void FileTransferWorker::deleteRemote(const QString& mappingId,
+                                      const QString& remotePath,
+                                      bool recursive)
+{
+    QString error;
+    if (!ensureConnected(error)) {
+        emit operationFinished(false, error);
+        return;
+    }
+
+    const FileMapping::Error result = m_Client->remove(
+            mappingId, remotePath, recursive, kTransferTimeoutMs);
+    if (!result.ok()) {
+        if (connectionError(result)) {
+            m_Client.reset();
+        }
+        emit operationFinished(false, errorMessage(result));
+        return;
+    }
+    emit operationFinished(true, tr("Deleted \"%1\".")
+                                    .arg(QFileInfo(remotePath).fileName()));
 }
 
 FileTransferWindow::FileTransferWindow(NvComputer computer)
@@ -707,6 +855,14 @@ FileTransferWindow::FileTransferWindow(NvComputer computer)
             m_Worker, &FileTransferWorker::upload);
     connect(this, &FileTransferWindow::requestDownload,
             m_Worker, &FileTransferWorker::download);
+    connect(this, &FileTransferWindow::requestCreateRemoteFile,
+            m_Worker, &FileTransferWorker::createRemoteFile);
+    connect(this, &FileTransferWindow::requestCreateRemoteFolder,
+            m_Worker, &FileTransferWorker::createRemoteFolder);
+    connect(this, &FileTransferWindow::requestRenameRemote,
+            m_Worker, &FileTransferWorker::renameRemote);
+    connect(this, &FileTransferWindow::requestDeleteRemote,
+            m_Worker, &FileTransferWorker::deleteRemote);
     connect(m_Worker, &FileTransferWorker::remoteReady,
             this, &FileTransferWindow::onRemoteReady);
     connect(m_Worker, &FileTransferWorker::remoteListed,
@@ -715,6 +871,8 @@ FileTransferWindow::FileTransferWindow(NvComputer computer)
             this, &FileTransferWindow::onTransferProgress);
     connect(m_Worker, &FileTransferWorker::transferFinished,
             this, &FileTransferWindow::onTransferFinished);
+    connect(m_Worker, &FileTransferWorker::operationFinished,
+            this, &FileTransferWindow::onOperationFinished);
     m_WorkerThread.start();
     emit initializeWorker();
 }
@@ -733,6 +891,19 @@ void FileTransferWindow::showAndActivate()
     show();
     raise();
     requestActivate();
+}
+
+void FileTransferWindow::queueExternalUpload(const QString& localPath)
+{
+    const QFileInfo source(localPath);
+    if (!source.exists() || source.isRoot()) {
+        setStatus(tr("The dropped file or folder is no longer available."), true);
+        return;
+    }
+
+    m_ExternalUploadQueue.append(source.absoluteFilePath());
+    showAndActivate();
+    startNextExternalUpload();
 }
 
 QRect FileTransferWindow::localPaneRect() const
@@ -778,6 +949,47 @@ QRect FileTransferWindow::refreshButtonRect() const
 {
     const QRect left = localPaneRect();
     return QRect(left.right() + 13, 345, kCenterWidth - 26, 38);
+}
+
+QRect FileTransferWindow::conflictButtonRect() const
+{
+    const QRect left = localPaneRect();
+    return QRect(left.right() + 8, 88, kCenterWidth - 16, 52);
+}
+
+QRect FileTransferWindow::receiveDirectoryButtonRect() const
+{
+    const QRect left = localPaneRect();
+    return QRect(left.right() + 8, 405, kCenterWidth - 16, 48);
+}
+
+QRect FileTransferWindow::actionButtonRect(bool local, int actionIndex) const
+{
+    const QRect pane = local ? localPaneRect() : remotePaneRect();
+    constexpr int gap = 5;
+    const int width = (pane.width() - gap * (kActionCount - 1)) / kActionCount;
+    return QRect(pane.x() + actionIndex * (width + gap), 88, width, 30);
+}
+
+QRect FileTransferWindow::dialogRect() const
+{
+    const int dialogWidth = std::min(540, width() - 80);
+    return QRect((width() - dialogWidth) / 2,
+                 (height() - 210) / 2,
+                 dialogWidth,
+                 210);
+}
+
+QRect FileTransferWindow::dialogOkRect() const
+{
+    const QRect dialog = dialogRect();
+    return QRect(dialog.right() - 208, dialog.bottom() - 52, 88, 34);
+}
+
+QRect FileTransferWindow::dialogCancelRect() const
+{
+    const QRect dialog = dialogRect();
+    return QRect(dialog.right() - 104, dialog.bottom() - 52, 88, 34);
 }
 
 int FileTransferWindow::visibleRowCount() const
@@ -921,6 +1133,7 @@ void FileTransferWindow::openRemoteSelection()
         m_RemoteMappingName = entry.name;
         m_RemotePath.clear();
         m_RemoteWritable = entry.writable;
+        m_RemoteDeleteAllowed = entry.deletable;
     }
     else {
         m_RemotePath = entry.path;
@@ -951,6 +1164,7 @@ void FileTransferWindow::remoteUp()
         m_RemoteMappingId.clear();
         m_RemoteMappingName.clear();
         m_RemoteWritable = false;
+        m_RemoteDeleteAllowed = false;
     }
     else {
         m_RemotePath = remoteParent(m_RemotePath);
@@ -988,7 +1202,11 @@ void FileTransferWindow::beginUpload()
     m_ProgressVisible = true;
     m_ProgressPercent = 0;
     setStatus(tr("Preparing to upload: %1").arg(entry.name));
-    emit requestUpload(entry.path, m_RemoteMappingId, m_RemotePath);
+    emit requestUpload(
+            entry.path,
+            m_RemoteMappingId,
+            m_RemotePath,
+            conflictPolicyValue());
 }
 
 void FileTransferWindow::beginDownload()
@@ -1017,7 +1235,347 @@ void FileTransferWindow::beginDownload()
     m_ProgressVisible = true;
     m_ProgressPercent = 0;
     setStatus(tr("Preparing to download: %1").arg(entry.name));
-    emit requestDownload(m_RemoteMappingId, entry.path, entry.directory, m_LocalPath);
+    emit requestDownload(
+            m_RemoteMappingId,
+            entry.path,
+            entry.directory,
+            m_LocalPath,
+            conflictPolicyValue());
+}
+
+int FileTransferWindow::conflictPolicyValue() const
+{
+    return static_cast<int>(
+            StreamingPreferences::get()->fileTransferConflictPolicy);
+}
+
+void FileTransferWindow::toggleConflictPolicy()
+{
+    StreamingPreferences* preferences = StreamingPreferences::get();
+    preferences->fileTransferConflictPolicy =
+            preferences->fileTransferConflictPolicy ==
+                    StreamingPreferences::FTCP_KEEP_BOTH
+            ? StreamingPreferences::FTCP_OVERWRITE
+            : StreamingPreferences::FTCP_KEEP_BOTH;
+    preferences->save();
+    setStatus(preferences->fileTransferConflictPolicy ==
+                      StreamingPreferences::FTCP_KEEP_BOTH
+              ? tr("Name conflicts will keep both items by adding (1), (2), ...")
+              : tr("Name conflicts will overwrite existing files."));
+}
+
+void FileTransferWindow::beginFileOperation(bool local, int actionIndex)
+{
+    if (m_Busy || m_DialogVisible) {
+        return;
+    }
+    if ((local && m_LocalPath.isEmpty()) ||
+        (!local && m_RemoteMappingId.isEmpty())) {
+        setStatus(local
+                          ? tr("Open a local drive before managing files.")
+                          : tr("Open a remote drive before managing files."),
+                  true);
+        return;
+    }
+    if (!local && !m_RemoteWritable) {
+        setStatus(tr("This remote drive is read-only."), true);
+        return;
+    }
+
+    if (actionIndex == 0 || actionIndex == 1) {
+        showNameDialog(local, actionIndex);
+        return;
+    }
+
+    const int selection = local ? m_LocalSelection : m_RemoteSelection;
+    const QVector<Entry>& entries = local ? m_LocalEntries : m_RemoteEntries;
+    if (selection < 0 || selection >= entries.size() ||
+        entries.at(selection).drive) {
+        setStatus(tr("Select a file or folder first."), true);
+        return;
+    }
+    if (!local && actionIndex == 3 && !m_RemoteDeleteAllowed) {
+        setStatus(tr("This host does not allow remote deletion."), true);
+        return;
+    }
+
+    if (actionIndex == 2) {
+        showNameDialog(local, actionIndex, entries.at(selection).name);
+    }
+    else if (actionIndex == 3) {
+        showDeleteDialog(local);
+    }
+}
+
+void FileTransferWindow::showNameDialog(bool local,
+                                        int actionIndex,
+                                        const QString& initialText)
+{
+    m_DialogVisible = true;
+    m_DialogConfirmOnly = false;
+    m_DialogLocal = local;
+    m_DialogAction = actionIndex;
+    m_DialogText = initialText;
+    m_DialogPreedit.clear();
+    m_DialogTitle = actionIndex == 0
+            ? tr("New folder name")
+            : actionIndex == 1
+            ? tr("New file name")
+            : tr("Rename item");
+    QGuiApplication::inputMethod()->show();
+    update();
+}
+
+void FileTransferWindow::showDeleteDialog(bool local)
+{
+    const int selection = local ? m_LocalSelection : m_RemoteSelection;
+    const QVector<Entry>& entries = local ? m_LocalEntries : m_RemoteEntries;
+    if (selection < 0 || selection >= entries.size()) {
+        return;
+    }
+    m_DialogVisible = true;
+    m_DialogConfirmOnly = true;
+    m_DialogLocal = local;
+    m_DialogAction = 3;
+    m_DialogText = entries.at(selection).name;
+    m_DialogPreedit.clear();
+    m_DialogTitle = tr("Permanently delete this item?");
+    update();
+}
+
+void FileTransferWindow::closeDialog()
+{
+    m_DialogVisible = false;
+    m_DialogConfirmOnly = false;
+    m_DialogAction = -1;
+    m_DialogTitle.clear();
+    m_DialogText.clear();
+    m_DialogPreedit.clear();
+    QGuiApplication::inputMethod()->hide();
+    update();
+}
+
+void FileTransferWindow::acceptDialog()
+{
+    if (!m_DialogVisible) {
+        return;
+    }
+
+    const bool local = m_DialogLocal;
+    const int action = m_DialogAction;
+    const QString name = m_DialogText.trimmed();
+    const int selection = local ? m_LocalSelection : m_RemoteSelection;
+    const QVector<Entry>& entries = local ? m_LocalEntries : m_RemoteEntries;
+    Entry selected;
+    if (selection >= 0 && selection < entries.size()) {
+        selected = entries.at(selection);
+    }
+
+    if (!m_DialogConfirmOnly &&
+        (name.isEmpty() || name == QStringLiteral(".") ||
+         name == QStringLiteral("..") || name.contains('/') ||
+         name.contains('\\'))) {
+        setStatus(tr("Enter a single valid file or folder name."), true);
+        return;
+    }
+    closeDialog();
+
+    if (local) {
+        bool ok = false;
+        QString operationName = name;
+        const bool keepBoth =
+                conflictPolicyFromValue(conflictPolicyValue()) ==
+                FileMapping::ConflictPolicy::KeepBoth;
+        QString destinationPath = QDir(m_LocalPath).filePath(name);
+
+        // Local file-manager operations follow the same visible conflict
+        // policy as transfers. KeepBoth finds an Explorer-style suffix;
+        // Overwrite is applied only after the user selected that policy.
+        if (action != 3 && action != 2 && QFileInfo::exists(destinationPath) &&
+            keepBoth) {
+            destinationPath = uniqueLocalSiblingPath(destinationPath);
+            operationName = QFileInfo(destinationPath).fileName();
+        }
+        if (action == 0) {
+            const QFileInfo destination(destinationPath);
+            ok = destination.isDir() || QDir().mkdir(destinationPath);
+        }
+        else if (action == 1) {
+            QFile file(destinationPath);
+            const QIODevice::OpenMode mode = keepBoth
+                    ? QIODevice::WriteOnly | QIODevice::NewOnly
+                    : QIODevice::WriteOnly | QIODevice::Truncate;
+            ok = !QFileInfo(destinationPath).isDir() && file.open(mode);
+        }
+        else if (action == 2) {
+            destinationPath = QDir(m_LocalPath).filePath(name);
+            if (QDir::cleanPath(destinationPath) ==
+                QDir::cleanPath(selected.path)) {
+                ok = true;
+            }
+            else {
+                // Rename collisions keep the destination intact. Destructive
+                // replacement remains limited to explicit transfer/create
+                // actions where the Overwrite policy is unambiguous.
+                ok = !QFileInfo::exists(destinationPath) &&
+                     QDir(m_LocalPath).rename(selected.name, name);
+            }
+        }
+        else if (action == 3) {
+            operationName = selected.name;
+            ok = selected.directory
+                    ? QDir(selected.path).removeRecursively()
+                    : QFile::remove(selected.path);
+        }
+        setStatus(ok
+                          ? tr("Local file operation completed: %1")
+                                    .arg(operationName)
+                          : tr("Local file operation failed: %1")
+                                    .arg(operationName),
+                  !ok);
+        refreshLocal();
+        return;
+    }
+
+    m_Busy = true;
+    setStatus(tr("Applying remote file operation..."));
+    if (action == 0) {
+        emit requestCreateRemoteFolder(
+                m_RemoteMappingId,
+                remoteJoin(m_RemotePath, name),
+                conflictPolicyValue());
+    }
+    else if (action == 1) {
+        emit requestCreateRemoteFile(
+                m_RemoteMappingId,
+                remoteJoin(m_RemotePath, name),
+                conflictPolicyValue());
+    }
+    else if (action == 2) {
+        emit requestRenameRemote(
+                m_RemoteMappingId,
+                selected.path,
+                remoteJoin(remoteParent(selected.path), name));
+    }
+    else if (action == 3) {
+        emit requestDeleteRemote(
+                m_RemoteMappingId, selected.path, selected.directory);
+    }
+}
+
+bool FileTransferWindow::configuredRemoteDestination(
+        QString& mappingId,
+        QString& remoteDirectory,
+        QString& displayPath) const
+{
+    QString configured =
+            StreamingPreferences::get()->fileTransferReceiveDirectory.trimmed();
+    if (configured.isEmpty()) {
+        return false;
+    }
+    configured = QDir::fromNativeSeparators(configured);
+
+    if (configured.size() >= 2 && configured.at(1) == QLatin1Char(':') &&
+        configured.at(0).isLetter()) {
+        const QChar drive = configured.at(0).toLower();
+        mappingId = QStringLiteral("drive-") + drive;
+        remoteDirectory = configured.mid(2);
+        while (remoteDirectory.startsWith('/')) {
+            remoteDirectory.remove(0, 1);
+        }
+        while (remoteDirectory.endsWith('/')) {
+            remoteDirectory.chop(1);
+        }
+        displayPath = drive.toUpper() + QStringLiteral(":\\") +
+                      QDir::toNativeSeparators(remoteDirectory);
+        return true;
+    }
+
+    if (configured.startsWith('/')) {
+        mappingId = QStringLiteral("filesystem-root");
+        remoteDirectory = configured.mid(1);
+        displayPath = configured;
+        return true;
+    }
+    return false;
+}
+
+void FileTransferWindow::saveCurrentRemoteReceiveDirectory()
+{
+    if (m_RemoteMappingId.isEmpty()) {
+        setStatus(tr("Open the remote destination folder first."), true);
+        return;
+    }
+
+    QString destination;
+    if (m_RemoteMappingId.startsWith(QStringLiteral("drive-")) &&
+        m_RemoteMappingName.size() >= 2) {
+        destination = m_RemoteMappingName.left(2) + QStringLiteral("\\") +
+                      QDir::toNativeSeparators(m_RemotePath);
+    }
+    else {
+        destination = QStringLiteral("/") + m_RemotePath;
+    }
+    StreamingPreferences* preferences = StreamingPreferences::get();
+    preferences->fileTransferReceiveDirectory = destination;
+    preferences->save();
+    setStatus(tr("Stream-window drops will be received in %1.")
+                      .arg(QDir::toNativeSeparators(destination)));
+    startNextExternalUpload();
+}
+
+void FileTransferWindow::startNextExternalUpload()
+{
+    if (m_Busy || m_ExternalUploadActive ||
+        m_ExternalUploadQueue.isEmpty()) {
+        return;
+    }
+
+    QString mappingId;
+    QString remoteDirectory;
+    QString displayPath;
+    if (!configuredRemoteDestination(
+                mappingId, remoteDirectory, displayPath)) {
+        setStatus(
+                tr("Choose a remote folder, then click \"Set receive folder\" before using stream-window drop."),
+                true);
+        return;
+    }
+
+    const auto root = std::find_if(
+            m_RemoteRoots.cbegin(),
+            m_RemoteRoots.cend(),
+            [&mappingId](const Entry& entry) {
+                return entry.mappingId == mappingId && entry.writable;
+            });
+    if (root == m_RemoteRoots.cend()) {
+        setStatus(tr("The configured host receive directory is unavailable or read-only: %1")
+                          .arg(displayPath),
+                  true);
+        return;
+    }
+
+    const QString sourcePath = m_ExternalUploadQueue.takeFirst();
+    const QFileInfo source(sourcePath);
+    if (!source.exists()) {
+        setStatus(tr("Skipped a dropped item that no longer exists: %1")
+                          .arg(sourcePath),
+                  true);
+        startNextExternalUpload();
+        return;
+    }
+
+    m_ExternalUploadActive = true;
+    m_Busy = true;
+    m_ProgressVisible = true;
+    m_ProgressPercent = 0;
+    setStatus(tr("Uploading dropped item to %1: %2")
+                      .arg(displayPath, source.fileName()));
+    emit requestUpload(
+            source.absoluteFilePath(),
+            mappingId,
+            remoteDirectory,
+            conflictPolicyValue());
 }
 
 bool FileTransferWindow::resolveRemoteDropTarget(
@@ -1146,7 +1704,11 @@ void FileTransferWindow::finishDrag(const QPoint& point)
         m_ProgressVisible = true;
         m_ProgressPercent = 0;
         setStatus(tr("Preparing to upload: %1").arg(source.name));
-        emit requestUpload(source.path, mappingId, remoteDirectory);
+        emit requestUpload(
+                source.path,
+                mappingId,
+                remoteDirectory,
+                conflictPolicyValue());
         return;
     }
 
@@ -1169,7 +1731,8 @@ void FileTransferWindow::finishDrag(const QPoint& point)
             m_RemoteMappingId,
             source.path,
             source.directory,
-            localDirectory);
+            localDirectory,
+            conflictPolicyValue());
 }
 
 void FileTransferWindow::resetDrag()
@@ -1216,6 +1779,9 @@ void FileTransferWindow::onRemoteReady(const QVariantList& mappings, const QStri
         entry.directory = true;
         entry.drive = true;
         entry.writable = item.value(QStringLiteral("writable")).toBool();
+        // A per-root capability keeps the UI compatible with older Sunshine
+        // builds that supported upload but intentionally omitted deletion.
+        entry.deletable = item.value(QStringLiteral("deletable")).toBool();
         entry.icon = fileIcon(
                 entry.name + QStringLiteral("\\"),
                 entry.name,
@@ -1231,6 +1797,7 @@ void FileTransferWindow::onRemoteReady(const QVariantList& mappings, const QStri
               ? tr("The host has no accessible drives.")
               : tr("Connected. Click a button or drag files to the other pane to transfer."),
               m_RemoteRoots.isEmpty());
+    startNextExternalUpload();
 }
 
 void FileTransferWindow::onRemoteListed(const QString& mappingId,
@@ -1266,6 +1833,7 @@ void FileTransferWindow::onRemoteListed(const QString& mappingId,
     m_RemoteSelection = -1;
     m_RemoteScroll = 0;
     setStatus(tr("Remote folder loaded."));
+    startNextExternalUpload();
 }
 
 void FileTransferWindow::onTransferProgress(const QString& message, quint64 completed, quint64 total)
@@ -1291,10 +1859,60 @@ void FileTransferWindow::onTransferFinished(bool ok, const QString& message)
         refreshLocal();
         refreshRemote();
     }
+    if (m_ExternalUploadActive) {
+        m_ExternalUploadActive = false;
+        startNextExternalUpload();
+    }
+}
+
+void FileTransferWindow::onOperationFinished(bool ok, const QString& message)
+{
+    m_Busy = false;
+    setStatus(message, !ok);
+    if (ok) {
+        refreshRemote();
+    }
 }
 
 bool FileTransferWindow::event(QEvent* event)
 {
+    if (event->type() == QEvent::InputMethod &&
+        m_DialogVisible && !m_DialogConfirmOnly) {
+        auto* inputEvent = static_cast<QInputMethodEvent*>(event);
+        // QKeyEvent::text() is not enough for Chinese IMEs. Commit completed
+        // text and paint the current composition until the IME finalizes it.
+        m_DialogText += inputEvent->commitString();
+        m_DialogPreedit = inputEvent->preeditString();
+        inputEvent->accept();
+        update();
+        return true;
+    }
+    if (event->type() == QEvent::InputMethodQuery) {
+        auto* queryEvent = static_cast<QInputMethodQueryEvent*>(event);
+        if (queryEvent->queries().testFlag(Qt::ImEnabled)) {
+            queryEvent->setValue(
+                    Qt::ImEnabled,
+                    m_DialogVisible && !m_DialogConfirmOnly);
+        }
+        if (queryEvent->queries().testFlag(Qt::ImSurroundingText)) {
+            queryEvent->setValue(Qt::ImSurroundingText, m_DialogText);
+        }
+        if (queryEvent->queries().testFlag(Qt::ImCursorPosition)) {
+            queryEvent->setValue(Qt::ImCursorPosition, m_DialogText.size());
+        }
+        if (queryEvent->queries().testFlag(Qt::ImAnchorPosition)) {
+            queryEvent->setValue(Qt::ImAnchorPosition, m_DialogText.size());
+        }
+        if (queryEvent->queries().testFlag(Qt::ImCursorRectangle)) {
+            const QRect dialog = dialogRect();
+            queryEvent->setValue(
+                    Qt::ImCursorRectangle,
+                    QRect(dialog.x() + 34, dialog.y() + 80, 2, 28));
+        }
+        queryEvent->accept();
+        return true;
+    }
+
     if (event->type() == QEvent::DragEnter ||
         event->type() == QEvent::DragMove) {
         auto* dragEvent = static_cast<QDropEvent*>(event);
@@ -1357,7 +1975,8 @@ bool FileTransferWindow::event(QEvent* event)
                 emit requestUpload(
                         source.absoluteFilePath(),
                         mappingId,
-                        remoteDirectory);
+                        remoteDirectory,
+                        conflictPolicyValue());
                 dropEvent->acceptProposedAction();
                 return true;
             }
@@ -1426,6 +2045,42 @@ void FileTransferWindow::paintEvent(QPaintEvent*)
                              : QStringLiteral("\\") +
                                        QDir::toNativeSeparators(m_RemotePath));
     drawPath(remotePathRect(), remoteDisplay, !m_RemoteMappingId.isEmpty());
+
+    const QStringList actionLabels {
+        tr("New folder"),
+        tr("New file"),
+        tr("Rename"),
+        tr("Delete")
+    };
+    auto drawActionBar = [&](bool local) {
+        const bool insideRoot = local
+                ? !m_LocalPath.isEmpty()
+                : !m_RemoteMappingId.isEmpty() && m_RemoteWritable;
+        for (int index = 0; index < actionLabels.size(); ++index) {
+            const bool enabled =
+                    !m_Busy && insideRoot &&
+                    (local || index != 3 || m_RemoteDeleteAllowed);
+            const QRect rect = actionButtonRect(local, index);
+            painter.setBrush(enabled ? QColor(43, 50, 60)
+                                     : QColor(33, 38, 45));
+            painter.setPen(border);
+            painter.drawRoundedRect(rect, 5, 5);
+            painter.setPen(enabled ? text : muted);
+            QFont actionFont = painter.font();
+            actionFont.setBold(false);
+            actionFont.setPointSize(9);
+            painter.setFont(actionFont);
+            painter.drawText(
+                    rect.adjusted(4, 0, -4, 0),
+                    Qt::AlignCenter,
+                    painter.fontMetrics().elidedText(
+                            actionLabels.at(index),
+                            Qt::ElideRight,
+                            rect.width() - 8));
+        }
+    };
+    drawActionBar(true);
+    drawActionBar(false);
 
     painter.setBrush(panel);
     painter.setPen(border);
@@ -1521,6 +2176,19 @@ void FileTransferWindow::paintEvent(QPaintEvent*)
     drawButton(uploadButtonRect(), tr("Upload →"), !m_Busy);
     drawButton(downloadButtonRect(), tr("← Download"), !m_Busy);
     drawButton(refreshButtonRect(), tr("Refresh"), !m_Busy);
+    const bool keepBoth =
+            StreamingPreferences::get()->fileTransferConflictPolicy ==
+            StreamingPreferences::FTCP_KEEP_BOTH;
+    drawButton(
+            conflictButtonRect(),
+            keepBoth
+                    ? tr("Conflict:\nKeep both")
+                    : tr("Conflict:\nOverwrite"),
+            !m_Busy);
+    drawButton(
+            receiveDirectoryButtonRect(),
+            tr("Set receive\nfolder"),
+            !m_Busy && !m_RemoteMappingId.isEmpty() && m_RemoteWritable);
 
     const QRect statusRect(0, height() - kStatusHeight, width(), kStatusHeight);
     painter.fillRect(statusRect, QColor(13, 16, 20));
@@ -1591,10 +2259,83 @@ void FileTransferWindow::paintEvent(QPaintEvent*)
                 Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap,
                 hint);
     }
+
+    if (m_DialogVisible) {
+        painter.fillRect(
+                QRect(QPoint(0, 0), size()),
+                QColor(0, 0, 0, 145));
+        const QRect dialog = dialogRect();
+        painter.setPen(border);
+        painter.setBrush(QColor(31, 36, 43));
+        painter.drawRoundedRect(dialog, 10, 10);
+
+        painter.setPen(text);
+        QFont titleFont = painter.font();
+        titleFont.setBold(true);
+        titleFont.setPointSize(12);
+        painter.setFont(titleFont);
+        painter.drawText(
+                dialog.adjusted(24, 18, -24, -150),
+                Qt::AlignLeft | Qt::AlignVCenter,
+                m_DialogTitle);
+
+        QFont dialogFont = painter.font();
+        dialogFont.setBold(false);
+        dialogFont.setPointSize(10);
+        painter.setFont(dialogFont);
+        if (m_DialogConfirmOnly) {
+            painter.setPen(QColor(255, 174, 126));
+            painter.drawText(
+                    dialog.adjusted(24, 62, -24, -72),
+                    Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+                    tr("\"%1\" will be permanently deleted. This cannot be undone.")
+                            .arg(m_DialogText));
+        }
+        else {
+            const QRect editor = dialog.adjusted(24, 72, -24, -82);
+            painter.setPen(QColor(80, 93, 108));
+            painter.setBrush(QColor(20, 24, 29));
+            painter.drawRoundedRect(editor, 5, 5);
+            painter.setPen(text);
+            const QString shownText = m_DialogText + m_DialogPreedit;
+            painter.drawText(
+                    editor.adjusted(10, 0, -10, 0),
+                    Qt::AlignLeft | Qt::AlignVCenter,
+                    painter.fontMetrics().elidedText(
+                            shownText, Qt::ElideLeft, editor.width() - 20));
+            const int cursorX = editor.x() + 10 +
+                    painter.fontMetrics().horizontalAdvance(shownText);
+            painter.drawLine(
+                    std::min(cursorX, editor.right() - 8),
+                    editor.y() + 8,
+                    std::min(cursorX, editor.right() - 8),
+                    editor.bottom() - 8);
+        }
+
+        drawButton(
+                dialogOkRect(),
+                m_DialogConfirmOnly ? tr("Delete") : tr("OK"),
+                true);
+        drawButton(dialogCancelRect(), tr("Cancel"), true);
+    }
 }
 
 void FileTransferWindow::mousePressEvent(QMouseEvent* event)
 {
+    const QPoint point = event->position().toPoint();
+    if (m_DialogVisible) {
+        if (event->button() == Qt::LeftButton) {
+            if (dialogOkRect().contains(point)) {
+                acceptDialog();
+            }
+            else if (dialogCancelRect().contains(point)) {
+                closeDialog();
+            }
+        }
+        event->accept();
+        return;
+    }
+
     if (event->button() != Qt::LeftButton) {
         QRasterWindow::mousePressEvent(event);
         return;
@@ -1603,7 +2344,24 @@ void FileTransferWindow::mousePressEvent(QMouseEvent* event)
     m_DragSourceIndex = -1;
     m_DragActive = false;
     m_DragHint.clear();
-    const QPoint point = event->position().toPoint();
+    if (conflictButtonRect().contains(point) && !m_Busy) {
+        toggleConflictPolicy();
+        return;
+    }
+    if (receiveDirectoryButtonRect().contains(point) && !m_Busy) {
+        saveCurrentRemoteReceiveDirectory();
+        return;
+    }
+    for (int index = 0; index < kActionCount; ++index) {
+        if (actionButtonRect(true, index).contains(point)) {
+            beginFileOperation(true, index);
+            return;
+        }
+        if (actionButtonRect(false, index).contains(point)) {
+            beginFileOperation(false, index);
+            return;
+        }
+    }
     if (localPathRect().contains(point) && point.x() >= localPathRect().right() - 80) {
         localUp();
         return;
@@ -1716,6 +2474,36 @@ void FileTransferWindow::wheelEvent(QWheelEvent* event)
 
 void FileTransferWindow::keyPressEvent(QKeyEvent* event)
 {
+    if (m_DialogVisible) {
+        if (event->key() == Qt::Key_Escape) {
+            closeDialog();
+        }
+        else if (event->key() == Qt::Key_Return ||
+                 event->key() == Qt::Key_Enter) {
+            acceptDialog();
+        }
+        else if (!m_DialogConfirmOnly &&
+                 event->matches(QKeySequence::Paste)) {
+            m_DialogText += QGuiApplication::clipboard()->text();
+            update();
+        }
+        else if (!m_DialogConfirmOnly &&
+                 event->key() == Qt::Key_Backspace) {
+            m_DialogText.chop(1);
+            update();
+        }
+        else if (!m_DialogConfirmOnly &&
+                 !event->text().isEmpty() &&
+                 !(event->modifiers() &
+                   (Qt::ControlModifier | Qt::AltModifier |
+                    Qt::MetaModifier))) {
+            m_DialogText += event->text();
+            update();
+        }
+        event->accept();
+        return;
+    }
+
     if (event->key() == Qt::Key_Escape) {
         hide();
     }

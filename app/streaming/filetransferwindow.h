@@ -5,6 +5,7 @@
 
 #include <QMutex>
 #include <QImage>
+#include <QInputMethodEvent>
 #include <QPoint>
 #include <QRasterWindow>
 #include <QThread>
@@ -30,11 +31,25 @@ public slots:
     void browseRemote(const QString& mappingId, const QString& path);
     void upload(const QString& localPath,
                 const QString& mappingId,
-                const QString& remoteDirectory);
+                const QString& remoteDirectory,
+                int conflictPolicy);
     void download(const QString& mappingId,
                   const QString& remotePath,
                   bool directory,
-                  const QString& localDirectory);
+                  const QString& localDirectory,
+                  int conflictPolicy);
+    void createRemoteFile(const QString& mappingId,
+                          const QString& remotePath,
+                          int conflictPolicy);
+    void createRemoteFolder(const QString& mappingId,
+                            const QString& remotePath,
+                            int conflictPolicy);
+    void renameRemote(const QString& mappingId,
+                      const QString& remotePath,
+                      const QString& destinationPath);
+    void deleteRemote(const QString& mappingId,
+                      const QString& remotePath,
+                      bool recursive);
 
 signals:
     void remoteReady(const QVariantList& mappings, const QString& error);
@@ -44,17 +59,20 @@ signals:
                       const QString& error);
     void transferProgress(const QString& message, quint64 completed, quint64 total);
     void transferFinished(bool ok, const QString& message);
+    void operationFinished(bool ok, const QString& message);
 
 private:
     bool ensureConnected(QString& error);
     bool uploadItem(const QString& localPath,
-                    const QString& mappingId,
-                    const QString& remotePath,
-                    QString& error);
+                     const QString& mappingId,
+                     const QString& remotePath,
+                     int conflictPolicy,
+                     QString& error);
     bool uploadFile(const QString& localPath,
-                    const QString& mappingId,
-                    const QString& remotePath,
-                    QString& error);
+                     const QString& mappingId,
+                     const QString& remotePath,
+                     int conflictPolicy,
+                     QString& error);
     bool downloadItem(const QString& mappingId,
                       const QString& remotePath,
                       bool directory,
@@ -79,17 +97,34 @@ public:
     ~FileTransferWindow() override;
 
     void showAndActivate();
+    // SDL emits one event per dropped path. Queueing keeps those files in one
+    // background transfer stream instead of opening parallel host sessions.
+    void queueExternalUpload(const QString& localPath);
 
 signals:
     void initializeWorker();
     void requestRemoteList(const QString& mappingId, const QString& path);
     void requestUpload(const QString& localPath,
                        const QString& mappingId,
-                       const QString& remoteDirectory);
+                       const QString& remoteDirectory,
+                       int conflictPolicy);
     void requestDownload(const QString& mappingId,
                          const QString& remotePath,
                          bool directory,
-                         const QString& localDirectory);
+                         const QString& localDirectory,
+                         int conflictPolicy);
+    void requestCreateRemoteFile(const QString& mappingId,
+                                 const QString& remotePath,
+                                 int conflictPolicy);
+    void requestCreateRemoteFolder(const QString& mappingId,
+                                   const QString& remotePath,
+                                   int conflictPolicy);
+    void requestRenameRemote(const QString& mappingId,
+                             const QString& remotePath,
+                             const QString& destinationPath);
+    void requestDeleteRemote(const QString& mappingId,
+                             const QString& remotePath,
+                             bool recursive);
 
 protected:
     bool event(QEvent* event) override;
@@ -109,6 +144,7 @@ private slots:
                         const QString& error);
     void onTransferProgress(const QString& message, quint64 completed, quint64 total);
     void onTransferFinished(bool ok, const QString& message);
+    void onOperationFinished(bool ok, const QString& message);
 
 private:
     struct Entry {
@@ -118,6 +154,7 @@ private:
         bool directory = false;
         bool drive = false;
         bool writable = false;
+        bool deletable = false;
         quint64 size = 0;
         QImage icon;
     };
@@ -129,6 +166,12 @@ private:
     QRect uploadButtonRect() const;
     QRect downloadButtonRect() const;
     QRect refreshButtonRect() const;
+    QRect conflictButtonRect() const;
+    QRect receiveDirectoryButtonRect() const;
+    QRect actionButtonRect(bool local, int actionIndex) const;
+    QRect dialogRect() const;
+    QRect dialogOkRect() const;
+    QRect dialogCancelRect() const;
     QRect rowRect(bool local, int visibleRow) const;
     int rowAt(bool local, const QPoint& point) const;
     int visibleRowCount() const;
@@ -143,6 +186,18 @@ private:
     void remoteUp();
     void beginUpload();
     void beginDownload();
+    void beginFileOperation(bool local, int actionIndex);
+    void showNameDialog(bool local, int actionIndex, const QString& initialText = QString());
+    void showDeleteDialog(bool local);
+    void acceptDialog();
+    void closeDialog();
+    void saveCurrentRemoteReceiveDirectory();
+    bool configuredRemoteDestination(QString& mappingId,
+                                     QString& remoteDirectory,
+                                     QString& displayPath) const;
+    void startNextExternalUpload();
+    int conflictPolicyValue() const;
+    void toggleConflictPolicy();
     bool resolveRemoteDropTarget(const QPoint& point,
                                  QString& mappingId,
                                  QString& remoteDirectory,
@@ -169,6 +224,7 @@ private:
     bool m_StatusError = false;
     bool m_Busy = true;
     bool m_RemoteWritable = false;
+    bool m_RemoteDeleteAllowed = false;
     bool m_ProgressVisible = false;
     int m_ProgressPercent = 0;
     int m_LocalSelection = -1;
@@ -181,4 +237,16 @@ private:
     int m_DragSourceIndex = -1;
     QPoint m_DragStart;
     QPoint m_DragPosition;
+    QStringList m_ExternalUploadQueue;
+    bool m_ExternalUploadActive = false;
+
+    // The raster window avoids a Qt Widgets dependency, so lightweight name
+    // and delete prompts are painted and edited directly in this window.
+    bool m_DialogVisible = false;
+    bool m_DialogConfirmOnly = false;
+    bool m_DialogLocal = true;
+    int m_DialogAction = -1;
+    QString m_DialogTitle;
+    QString m_DialogText;
+    QString m_DialogPreedit;
 };

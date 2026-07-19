@@ -908,6 +908,18 @@ Fix the problem, then modify or rename the file to retry.
         <source>Unable to initialize video decoder. Please check your streaming settings and try again.</source>
         <translation>无法初始化视频解码器。请检查你的流式传输设置，然后重试。</translation>
     </message>
+    <message>
+        <source>Direct file drop is available in windowed mode.</source>
+        <translation>直接拖入文件仅在窗口模式下可用。</translation>
+    </message>
+    <message>
+        <source>Host file transfer is not available.</source>
+        <translation>远程主机文件传输不可用。</translation>
+    </message>
+    <message>
+        <source>Added dropped item to the file transfer queue.</source>
+        <translation>已将拖入项目加入文件传输队列。</translation>
+    </message>
 </context>
 <context>
     <name>SettingsView</name>
@@ -1593,6 +1605,38 @@ Fix the problem, then modify or rename the file to retry.
         <source>Automatically detect blocked connections (Recommended)</source>
         <translation>自动检测被阻止的连接 (推荐)</translation>
     </message>
+    <message>
+        <source>File Transfer Settings</source>
+        <translation>文件传输设置</translation>
+    </message>
+    <message>
+        <source>Host receive directory for files dropped onto a windowed stream</source>
+        <translation>拖入窗口化串流时的远程主机接收目录</translation>
+    </message>
+    <message>
+        <source>Example: %1</source>
+        <translation>示例：%1</translation>
+    </message>
+    <message>
+        <source>Leave this empty to choose the current remote folder from the File Transfer window. Only paths on drives exposed by the paired Sunshine host are accepted.</source>
+        <translation>留空后，可在文件传输窗口中选择当前远程文件夹。只能使用已配对 Sunshine 主机公开的磁盘路径。</translation>
+    </message>
+    <message>
+        <source>When a file or folder with the same name already exists</source>
+        <translation>目标位置已有同名文件或文件夹时</translation>
+    </message>
+    <message>
+        <source>Keep both and add (1), (2), ...</source>
+        <translation>保留两者并添加 (1)、(2) 等后缀</translation>
+    </message>
+    <message>
+        <source>Overwrite existing files</source>
+        <translation>覆盖已有文件</translation>
+    </message>
+    <message>
+        <source>Warning: Full-disk transfer, overwrite, and delete operations are intended only for trusted local networks and paired devices.</source>
+        <translation>警告：全盘传输、覆盖和删除操作仅适用于可信局域网和已配对的自有设备。</translation>
+    </message>
 </context>
 <context>
     <name>StreamSegue</name>
@@ -1898,6 +1942,30 @@ Fix the problem, then modify or rename the file to retry.
         <source>Downloaded &quot;%1&quot; to this computer.</source>
         <translation>已将“%1”下载到本机。</translation>
     </message>
+    <message>
+        <source>Could not allocate a unique local name for &quot;%1&quot;.</source>
+        <translation>无法为“%1”生成不重复的本机名称。</translation>
+    </message>
+    <message>
+        <source>Cannot overwrite &quot;%1&quot; because the existing item has a different type.</source>
+        <translation>无法覆盖“%1”，因为已有项目的类型不同。</translation>
+    </message>
+    <message>
+        <source>Created file &quot;%1&quot;.</source>
+        <translation>已创建文件“%1”。</translation>
+    </message>
+    <message>
+        <source>Created folder &quot;%1&quot;.</source>
+        <translation>已创建文件夹“%1”。</translation>
+    </message>
+    <message>
+        <source>Renamed item to &quot;%1&quot;.</source>
+        <translation>已将项目重命名为“%1”。</translation>
+    </message>
+    <message>
+        <source>Deleted &quot;%1&quot;.</source>
+        <translation>已删除“%1”。</translation>
+    </message>
 </context>
 <context>
     <name>FileTransferWindow</name>
@@ -2084,6 +2152,140 @@ Fix the problem, then modify or rename the file to retry.
     <message>
         <source>Refresh</source>
         <translation>刷新</translation>
+    </message>
+    <message>
+        <source>An item with the same name already exists.</source>
+        <translation>目标位置已存在同名项目。</translation>
+    </message>
+    <message>
+        <source>The dropped file or folder is no longer available.</source>
+        <translation>拖入的文件或文件夹已不可用。</translation>
+    </message>
+    <message>
+        <source>Name conflicts will keep both items by adding (1), (2), ...</source>
+        <translation>遇到同名项目时，将添加 (1)、(2) 等后缀并保留两者。</translation>
+    </message>
+    <message>
+        <source>Name conflicts will overwrite existing files.</source>
+        <translation>遇到同名项目时，将覆盖已有文件。</translation>
+    </message>
+    <message>
+        <source>Open a local drive before managing files.</source>
+        <translation>请先打开一个本机磁盘，再管理文件。</translation>
+    </message>
+    <message>
+        <source>Open a remote drive before managing files.</source>
+        <translation>请先打开一个远程磁盘，再管理文件。</translation>
+    </message>
+    <message>
+        <source>Select a file or folder first.</source>
+        <translation>请先选择文件或文件夹。</translation>
+    </message>
+    <message>
+        <source>This host does not allow remote deletion.</source>
+        <translation>此远程主机不允许远程删除。</translation>
+    </message>
+    <message>
+        <source>New folder name</source>
+        <translation>新文件夹名称</translation>
+    </message>
+    <message>
+        <source>New file name</source>
+        <translation>新文件名称</translation>
+    </message>
+    <message>
+        <source>Rename item</source>
+        <translation>重命名项目</translation>
+    </message>
+    <message>
+        <source>Permanently delete this item?</source>
+        <translation>要永久删除此项目吗？</translation>
+    </message>
+    <message>
+        <source>Enter a single valid file or folder name.</source>
+        <translation>请输入一个有效的文件或文件夹名称。</translation>
+    </message>
+    <message>
+        <source>Local file operation completed: %1</source>
+        <translation>本机文件操作已完成：%1</translation>
+    </message>
+    <message>
+        <source>Local file operation failed: %1</source>
+        <translation>本机文件操作失败：%1</translation>
+    </message>
+    <message>
+        <source>Applying remote file operation...</source>
+        <translation>正在执行远程文件操作…</translation>
+    </message>
+    <message>
+        <source>Open the remote destination folder first.</source>
+        <translation>请先打开远程目标文件夹。</translation>
+    </message>
+    <message>
+        <source>Stream-window drops will be received in %1.</source>
+        <translation>拖入串流窗口的项目将保存到 %1。</translation>
+    </message>
+    <message>
+        <source>Choose a remote folder, then click &quot;Set receive folder&quot; before using stream-window drop.</source>
+        <translation>请先选择一个远程文件夹并点击“设为接收目录”，再向串流窗口拖入文件。</translation>
+    </message>
+    <message>
+        <source>The configured host receive directory is unavailable or read-only: %1</source>
+        <translation>设置的远程主机接收目录不可用或为只读：%1</translation>
+    </message>
+    <message>
+        <source>Skipped a dropped item that no longer exists: %1</source>
+        <translation>已跳过不存在的拖入项目：%1</translation>
+    </message>
+    <message>
+        <source>Uploading dropped item to %1: %2</source>
+        <translation>正在将拖入项目上传到 %1：%2</translation>
+    </message>
+    <message>
+        <source>New folder</source>
+        <translation>新建文件夹</translation>
+    </message>
+    <message>
+        <source>New file</source>
+        <translation>新建文件</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>重命名</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation>删除</translation>
+    </message>
+    <message>
+        <source>Conflict:
+Keep both</source>
+        <translation>同名处理：
+保留两者</translation>
+    </message>
+    <message>
+        <source>Conflict:
+Overwrite</source>
+        <translation>同名处理：
+覆盖</translation>
+    </message>
+    <message>
+        <source>Set receive
+folder</source>
+        <translation>设为接收
+目录</translation>
+    </message>
+    <message>
+        <source>&quot;%1&quot; will be permanently deleted. This cannot be undone.</source>
+        <translation>“%1”将被永久删除，此操作无法撤销。</translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>确定</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
     </message>
 </context>
 </TS>

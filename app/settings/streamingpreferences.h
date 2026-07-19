@@ -143,6 +143,15 @@ public:
     };
     Q_ENUM(GamepadQuitCombo);
 
+    // User-facing subset of protocol collision policies. Reject remains a
+    // compatibility default on the host but is no longer the client default.
+    enum FileTransferConflictPolicy
+    {
+        FTCP_KEEP_BOTH = 0,
+        FTCP_OVERWRITE = 1,
+    };
+    Q_ENUM(FileTransferConflictPolicy);
+
     Q_PROPERTY(int width MEMBER width NOTIFY displayModeChanged)
     Q_PROPERTY(int height MEMBER height NOTIFY displayModeChanged)
     Q_PROPERTY(int fps MEMBER fps NOTIFY displayModeChanged)
@@ -201,6 +210,9 @@ public:
     Q_PROPERTY(bool enableMicrophone MEMBER enableMicrophone NOTIFY enableMicrophoneChanged)
     Q_PROPERTY(OverlayMenuPosition overlayMenuPosition MEMBER overlayMenuPosition NOTIFY overlayMenuPositionChanged)
     Q_PROPERTY(bool autoUpdateCheck MEMBER autoUpdateCheck NOTIFY autoUpdateCheckChanged)
+    // Direct stream-window drops use this host path and collision policy.
+    Q_PROPERTY(QString fileTransferReceiveDirectory MEMBER fileTransferReceiveDirectory NOTIFY fileTransferReceiveDirectoryChanged)
+    Q_PROPERTY(FileTransferConflictPolicy fileTransferConflictPolicy MEMBER fileTransferConflictPolicy NOTIFY fileTransferConflictPolicyChanged)
 
     Q_INVOKABLE bool retranslate();
 
@@ -264,6 +276,8 @@ public:
     bool enableMicrophone;
     OverlayMenuPosition overlayMenuPosition;
     bool autoUpdateCheck;
+    QString fileTransferReceiveDirectory;
+    FileTransferConflictPolicy fileTransferConflictPolicy;
 
 signals:
     void displayModeChanged();
@@ -322,6 +336,8 @@ signals:
     void enableMicrophoneChanged();
     void overlayMenuPositionChanged();
     void autoUpdateCheckChanged();
+    void fileTransferReceiveDirectoryChanged();
+    void fileTransferConflictPolicyChanged();
 
 private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);

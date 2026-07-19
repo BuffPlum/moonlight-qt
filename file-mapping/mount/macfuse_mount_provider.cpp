@@ -116,6 +116,10 @@ int errnoForError(const Error& error)
         return EACCES;
     case ErrorKind::ReadOnly:
         return EROFS;
+    case ErrorKind::Conflict:
+        // Preserve a native "already exists" result for callers that expose
+        // the protocol through a filesystem mount.
+        return EEXIST;
     case ErrorKind::Timeout:
         return ETIMEDOUT;
     case ErrorKind::Unsupported:

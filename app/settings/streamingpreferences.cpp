@@ -73,6 +73,9 @@
 #define SER_OVERLAYMENUPOS "overlaymenuposition"
 #define SER_HDRMODE "hdrmode"
 #define SER_AUTOUPDATECHECK "autoupdatecheck"
+// Host-side destination used when files are dropped on a windowed stream.
+#define SER_FILETRANSFERRECEIVEDIR "filetransferreceivedirectory"
+#define SER_FILETRANSFERCONFLICTPOLICY "filetransferconflictpolicy"
 
 #define CURRENT_DEFAULT_VER 2
 
@@ -171,6 +174,13 @@ void StreamingPreferences::reload()
     overlayMenuPosition = static_cast<OverlayMenuPosition>(settings.value(SER_OVERLAYMENUPOS,
                                                            static_cast<int>(OverlayMenuPosition::OMP_RIGHT_EDGE)).toInt());
     autoUpdateCheck = settings.value(SER_AUTOUPDATECHECK, true).toBool();
+    fileTransferReceiveDirectory =
+            settings.value(SER_FILETRANSFERRECEIVEDIR, QString()).toString();
+    // Keeping both is the safe, non-blocking replacement for the old
+    // "always reject collisions" behavior.
+    fileTransferConflictPolicy = static_cast<FileTransferConflictPolicy>(
+            settings.value(SER_FILETRANSFERCONFLICTPOLICY,
+                           static_cast<int>(FTCP_KEEP_BOTH)).toInt());
 
     streamResolutionScale = settings.value(SER_STREAMRESOLUTIONSCALE, false).toBool();
     streamResolutionScaleRatio = settings.value(SER_STREAMRESOLUTIONSCALERATIO, 100).toInt();
@@ -440,6 +450,10 @@ void StreamingPreferences::save()
     settings.setValue(SER_MICROPHONE, enableMicrophone);
     settings.setValue(SER_OVERLAYMENUPOS, static_cast<int>(overlayMenuPosition));
     settings.setValue(SER_AUTOUPDATECHECK, autoUpdateCheck);
+    settings.setValue(SER_FILETRANSFERRECEIVEDIR,
+                      fileTransferReceiveDirectory.trimmed());
+    settings.setValue(SER_FILETRANSFERCONFLICTPOLICY,
+                      static_cast<int>(fileTransferConflictPolicy));
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)

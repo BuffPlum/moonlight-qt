@@ -14,6 +14,7 @@ enum class ErrorKind {
     Network,
     NotFound,
     ReadOnly,
+    Conflict,
     Cancelled,
     Unsupported,
     Internal,

@@ -2045,6 +2045,84 @@ Flickable {
             }
         }
 
+        // Full-disk transfer is intentionally configured beside the other
+        // streaming preferences because stream-window drops happen while a
+        // session is active, not from the computer browser.
+        GroupBox {
+            id: fileTransferSettingsGroupBox
+            width: (parent.width - (parent.leftPadding + parent.rightPadding))
+            padding: 12
+            title: "<b><font color=\"#FFA5D2\">📁 " + qsTr("File Transfer Settings") + "</font></b>"
+            font: settingsPage.groupBoxTitleFont
+
+            Column {
+                anchors.fill: parent
+                spacing: 7
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Host receive directory for files dropped onto a windowed stream")
+                    font.pointSize: 12
+                    wrapMode: Text.Wrap
+                }
+
+                TextField {
+                    id: fileTransferReceiveDirectoryField
+                    width: parent.width
+                    // Keep the Windows path outside the translated source so
+                    // lupdate cannot interpret its backslash as an escape.
+                    placeholderText: qsTr("Example: %1").arg("D:\\Downloads")
+                    text: StreamingPreferences.fileTransferReceiveDirectory
+                    selectByMouse: true
+                    onEditingFinished: {
+                        StreamingPreferences.fileTransferReceiveDirectory = text.trim()
+                    }
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 10000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Leave this empty to choose the current remote folder from the File Transfer window. Only paths on drives exposed by the paired Sunshine host are accepted.")
+                }
+
+                Label {
+                    width: parent.width
+                    text: qsTr("When a file or folder with the same name already exists")
+                    font.pointSize: 12
+                    wrapMode: Text.Wrap
+                }
+
+                AutoResizingComboBox {
+                    id: fileTransferConflictPolicyCombo
+                    textRole: "text"
+                    model: ListModel {
+                        id: fileTransferConflictPolicyModel
+                        ListElement {
+                            text: qsTr("Keep both and add (1), (2), ...")
+                            val: StreamingPreferences.FTCP_KEEP_BOTH
+                        }
+                        ListElement {
+                            text: qsTr("Overwrite existing files")
+                            val: StreamingPreferences.FTCP_OVERWRITE
+                        }
+                    }
+                    Component.onCompleted: {
+                        currentIndex = StreamingPreferences.fileTransferConflictPolicy ===
+                                StreamingPreferences.FTCP_OVERWRITE ? 1 : 0
+                    }
+                    onActivated: {
+                        StreamingPreferences.fileTransferConflictPolicy =
+                                fileTransferConflictPolicyModel.get(currentIndex).val
+                    }
+                }
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Warning: Full-disk transfer, overwrite, and delete operations are intended only for trusted local networks and paired devices.")
+                    color: "#ff9f7f"
+                    wrapMode: Text.Wrap
+                }
+            }
+        }
+
         GroupBox {
             id: gamepadSettingsGroupBox
             width: (parent.width - (parent.leftPadding + parent.rightPadding))

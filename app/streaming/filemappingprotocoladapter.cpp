@@ -24,8 +24,16 @@ FileMapping::Error mapRpcError(const QString& message)
         return makeError(FileMapping::ErrorKind::NotFound, message);
     }
     if (message.contains(QStringLiteral("read_only"), Qt::CaseInsensitive) ||
-            message.contains(QStringLiteral("does not allow uploads"), Qt::CaseInsensitive)) {
+            message.contains(QStringLiteral("delete_not_allowed"), Qt::CaseInsensitive) ||
+            message.contains(QStringLiteral("does not allow uploads"), Qt::CaseInsensitive) ||
+            message.contains(QStringLiteral("does not allow deletion"), Qt::CaseInsensitive)) {
         return makeError(FileMapping::ErrorKind::ReadOnly, message);
+    }
+    // Collision errors are kept separate from protocol failures so the
+    // file-manager UI can explain that the user should rename the item or
+    // switch the transfer conflict policy.
+    if (message.contains(QStringLiteral("already_exists"), Qt::CaseInsensitive)) {
+        return makeError(FileMapping::ErrorKind::Conflict, message);
     }
     if (message.contains(QStringLiteral("forbidden"), Qt::CaseInsensitive) ||
             message.contains(QStringLiteral("unauthorized"), Qt::CaseInsensitive)) {
@@ -219,11 +227,49 @@ FileMapping::ReadResult FileMappingProtocolAdapter::read(const QString& mappingI
     return result;
 }
 
-FileMapping::Error FileMappingProtocolAdapter::mkdir(const QString& mappingId,
-                                                     const QString& path,
-                                                     int timeoutMs)
+FileMapping::PathResult FileMappingProtocolAdapter::mkdir(
+        const QString& mappingId,
+        const QString& path,
+        FileMapping::ConflictPolicy conflictPolicy,
+        int timeoutMs)
 {
-    FileMappingClient::RpcResult rpc = client().mkdir(mappingId, path, timeoutMs);
+    FileMapping::PathResult result;
+    FileMappingClient::RpcResult rpc = client().mkdir(
+            mappingId, path, FileMapping::conflictPolicyName(conflictPolicy), timeoutMs);
+    if (!rpc.ok) {
+        result.error = mapRpcError(rpc.error);
+        return result;
+    }
+    result.actualPath = rpc.reply.value(QStringLiteral("path")).toString(path);
+    result.created = rpc.reply.value(QStringLiteral("created")).toBool(false);
+    return result;
+}
+
+FileMapping::PathResult FileMappingProtocolAdapter::rename(
+        const QString& mappingId,
+        const QString& path,
+        const QString& destinationPath,
+        int timeoutMs)
+{
+    FileMapping::PathResult result;
+    FileMappingClient::RpcResult rpc = client().rename(
+            mappingId, path, destinationPath, timeoutMs);
+    if (!rpc.ok) {
+        result.error = mapRpcError(rpc.error);
+        return result;
+    }
+    result.actualPath = rpc.reply.value(QStringLiteral("path")).toString(destinationPath);
+    return result;
+}
+
+FileMapping::Error FileMappingProtocolAdapter::remove(
+        const QString& mappingId,
+        const QString& path,
+        bool recursive,
+        int timeoutMs)
+{
+    FileMappingClient::RpcResult rpc = client().remove(
+            mappingId, path, recursive, timeoutMs);
     return rpc.ok ? FileMapping::Error::none() : mapRpcError(rpc.error);
 }
 
@@ -235,6 +281,7 @@ FileMapping::WriteResult FileMappingProtocolAdapter::write(const QString& mappin
                                                            const QByteArray& data,
                                                            bool begin,
                                                            bool complete,
+                                                           FileMapping::ConflictPolicy conflictPolicy,
                                                            int timeoutMs)
 {
     FileMapping::WriteResult result;
@@ -246,6 +293,7 @@ FileMapping::WriteResult FileMappingProtocolAdapter::write(const QString& mappin
                                                       data,
                                                       begin,
                                                       complete,
+                                                      FileMapping::conflictPolicyName(conflictPolicy),
                                                       timeoutMs);
     if (!rpc.ok) {
         result.error = mapRpcError(rpc.error);
@@ -254,6 +302,7 @@ FileMapping::WriteResult FileMappingProtocolAdapter::write(const QString& mappin
 
     result.nextOffset = static_cast<quint64>(rpc.reply.value(QStringLiteral("next_offset")).toDouble(offset));
     result.completed = rpc.reply.value(QStringLiteral("completed")).toBool(false);
+    result.actualPath = rpc.reply.value(QStringLiteral("path")).toString(path);
     return result;
 }
 

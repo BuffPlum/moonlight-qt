@@ -10,6 +10,27 @@
 
 namespace FileMapping {
 
+// Transfers resolve a destination collision on the machine that owns the
+// destination, which avoids choosing a stale "(n)" suffix on the other peer.
+enum class ConflictPolicy {
+    KeepBoth,
+    Overwrite,
+    Reject,
+};
+
+inline QString conflictPolicyName(ConflictPolicy policy)
+{
+    switch (policy) {
+    case ConflictPolicy::KeepBoth:
+        return QStringLiteral("keep_both");
+    case ConflictPolicy::Overwrite:
+        return QStringLiteral("overwrite");
+    case ConflictPolicy::Reject:
+        return QStringLiteral("reject");
+    }
+    return QStringLiteral("keep_both");
+}
+
 struct Capability {
     bool available = false;
     bool enabled = false;
@@ -71,6 +92,17 @@ struct WriteResult {
     Error error;
     quint64 nextOffset = 0;
     bool completed = false;
+    // Sunshine may choose an Explorer-style suffixed name for KeepBoth.
+    QString actualPath;
+
+    bool ok() const { return error.ok(); }
+};
+
+struct PathResult {
+    Error error;
+    // mkdir/write may return a suffixed path when KeepBoth is selected.
+    QString actualPath;
+    bool created = false;
 
     bool ok() const { return error.ok(); }
 };

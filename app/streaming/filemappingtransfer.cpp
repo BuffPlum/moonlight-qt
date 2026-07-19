@@ -111,9 +111,13 @@ FileMapping::Error ensureRemoteParents(FileMapping::ProtocolClient& client,
             current += QLatin1Char('/');
         }
         current += segments.at(index);
-        const FileMapping::Error error = client.mkdir(mappingId, current, timeoutMs);
-        if (!error.ok()) {
-            return error;
+        const FileMapping::PathResult result = client.mkdir(
+                mappingId,
+                current,
+                FileMapping::ConflictPolicy::Overwrite,
+                timeoutMs);
+        if (!result.ok()) {
+            return result.error;
         }
     }
     return FileMapping::Error::none();
@@ -137,6 +141,7 @@ FileMapping::Error uploadFile(FileMapping::ProtocolClient& client,
     const QFileInfo initialInfo(localPath);
     const qint64 initialModified = initialInfo.lastModified().toMSecsSinceEpoch();
     const QString uploadId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString uploadPath = remotePath;
     quint64 offset = 0;
     bool first = true;
 
@@ -173,13 +178,14 @@ FileMapping::Error uploadFile(FileMapping::ProtocolClient& client,
         }
         const bool complete = offset + static_cast<quint64>(chunk.size()) >= totalSize;
         const FileMapping::WriteResult result = client.write(mappingId,
-                                                             remotePath,
+                                                             uploadPath,
                                                              uploadId,
                                                              offset,
                                                              totalSize,
                                                              chunk,
                                                              first,
                                                              complete,
+                                                             FileMapping::ConflictPolicy::KeepBoth,
                                                              timeoutMs);
         if (!result.ok()) {
             return result.error;
@@ -192,6 +198,8 @@ FileMapping::Error uploadFile(FileMapping::ProtocolClient& client,
                     QObject::tr("Host acknowledged an unexpected upload offset."));
         }
         offset = expectedOffset;
+        // Continue later chunks with the host-selected "(n)" name.
+        uploadPath = result.actualPath;
         first = false;
     } while (offset < totalSize || first);
 

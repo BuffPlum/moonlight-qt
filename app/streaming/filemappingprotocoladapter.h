@@ -23,18 +23,28 @@ public:
                                  quint64 offset,
                                  quint32 length,
                                  int timeoutMs) override;
-    FileMapping::Error mkdir(const QString& mappingId,
-                             const QString& path,
-                             int timeoutMs) override;
+    FileMapping::PathResult mkdir(const QString& mappingId,
+                                  const QString& path,
+                                  FileMapping::ConflictPolicy conflictPolicy,
+                                  int timeoutMs) override;
+    FileMapping::PathResult rename(const QString& mappingId,
+                                   const QString& path,
+                                   const QString& destinationPath,
+                                   int timeoutMs) override;
+    FileMapping::Error remove(const QString& mappingId,
+                              const QString& path,
+                              bool recursive,
+                              int timeoutMs) override;
     FileMapping::WriteResult write(const QString& mappingId,
                                    const QString& path,
                                    const QString& uploadId,
                                    quint64 offset,
                                    quint64 totalSize,
-                                   const QByteArray& data,
-                                   bool begin,
-                                   bool complete,
-                                   int timeoutMs) override;
+                                    const QByteArray& data,
+                                    bool begin,
+                                    bool complete,
+                                    FileMapping::ConflictPolicy conflictPolicy,
+                                    int timeoutMs) override;
 
 private:
     FileMappingClient& client();

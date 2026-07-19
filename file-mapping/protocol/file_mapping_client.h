@@ -23,18 +23,28 @@ public:
                             quint64 offset,
                             quint32 length,
                             int timeoutMs) = 0;
-    virtual Error mkdir(const QString& mappingId,
-                        const QString& path,
-                        int timeoutMs) = 0;
+    virtual PathResult mkdir(const QString& mappingId,
+                             const QString& path,
+                             ConflictPolicy conflictPolicy,
+                             int timeoutMs) = 0;
+    virtual PathResult rename(const QString& mappingId,
+                              const QString& path,
+                              const QString& destinationPath,
+                              int timeoutMs) = 0;
+    virtual Error remove(const QString& mappingId,
+                         const QString& path,
+                         bool recursive,
+                         int timeoutMs) = 0;
     virtual WriteResult write(const QString& mappingId,
                               const QString& path,
                               const QString& uploadId,
                               quint64 offset,
                               quint64 totalSize,
-                              const QByteArray& data,
-                              bool begin,
-                              bool complete,
-                              int timeoutMs) = 0;
+                               const QByteArray& data,
+                               bool begin,
+                               bool complete,
+                               ConflictPolicy conflictPolicy,
+                               int timeoutMs) = 0;
 };
 
 using ProtocolClientPtr = std::shared_ptr<ProtocolClient>;
