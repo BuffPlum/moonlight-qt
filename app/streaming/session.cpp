@@ -1586,16 +1586,16 @@ private:
     void run() override
     {
         // Only quit the running app if our session terminated gracefully
-        bool shouldQuit =
+        const bool shouldQuit =
                 !m_Session->m_UnexpectedTermination &&
                 m_Session->m_Preferences->quitAppAfter;
+        const int portTestResults = m_Session->m_PortTestResults;
+        const bool shouldExit = m_Session->m_ShouldExit;
 
-        // Notify the UI
+        // The quit progress UI is safe to display while cleanup is running,
+        // but the finished signal must wait until we're done using Session.
         if (shouldQuit) {
             emit m_Session->quitStarting();
-        }
-        else {
-            emit m_Session->sessionFinished(m_Session->m_PortTestResults);
         }
 
         // The video decoder must already be destroyed, since it could
@@ -1617,13 +1617,14 @@ private:
             } catch (const GfeHttpResponseException&) {
             } catch (const QtNetworkReplyException&) {
             }
-
-            // Session is finished now
-            emit m_Session->sessionFinished(m_Session->m_PortTestResults);
         }
 
+        // The UI may release Session in response to this signal, so this must
+        // be the final operation in this task that accesses Session.
+        emit m_Session->sessionFinished(portTestResults);
+
         // Exit the entire program if requested
-        if (m_Session->m_ShouldExit) {
+        if (shouldExit) {
             QCoreApplication::instance()->quit();
         }
     }

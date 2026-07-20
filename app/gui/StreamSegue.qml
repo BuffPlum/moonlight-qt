@@ -51,11 +51,14 @@ Item {
 
     function quitStarting()
     {
-        // Avoid the push transition animation
-        var component = Qt.createComponent("QuitSegue.qml")
-        stackView.replace(stackView.currentItem, component.createObject(stackView, {"appName": appName}), StackView.Immediate)
+        // Keep this segue alive until the worker confirms that Session is no
+        // longer in use. Replacing it here can destroy Session during cleanup.
+        stageText = qsTr("Quitting %1...").arg(appName)
+        stageSpinner.visible = true
+        stageLabel.visible = true
+        hintText.visible = false
 
-        // Show the Qt window again to show quit segue
+        // Show the Qt window again to show quit progress
         window.visible = true
     }
 
@@ -65,15 +68,30 @@ Item {
             streamSegueErrorDialog.text += "\n\n" + qsTr("This PC's Internet connection is blocking Moonlight. Streaming over the Internet may not work while connected to this network.")
         }
 
-        // Re-enable GUI gamepad usage now
+        // Do not pop this segue yet. The cleanup worker emits
+        // readyForDeletion only after it has finished using Session.
+        window.visible = true
+    }
+
+    function sessionReadyForDeletion()
+    {
+        var shouldQuitAfter = quitAfter
+        var hasError = streamSegueErrorDialog.text !== ""
+
+        // Re-enable GUI gamepad usage only after SDL cleanup is complete
         SdlGamepadKeyNavigation.enable()
 
+        // Garbage collect the Session object since it's pretty heavyweight
+        // and keeps other libraries (like SDL_TTF) around until it is deleted.
+        session = null
+        gc()
+
         // Pop the StreamSegue off the stack if this is a GUI-based app launch
-        if (!quitAfter) {
+        if (!shouldQuitAfter) {
             stackView.pop()
         }
 
-        if (quitAfter && !streamSegueErrorDialog.text) {
+        if (shouldQuitAfter && !hasError) {
             // If this was a CLI launch without errors, exit now
             Qt.quit()
         }
@@ -85,19 +103,11 @@ Item {
             // the Qt UI is visible again to prevent losing
             // focus on the dialog which would impact gamepad
             // users.
-            if (streamSegueErrorDialog.text) {
-                streamSegueErrorDialog.quitAfter = quitAfter
+            if (hasError) {
+                streamSegueErrorDialog.quitAfter = shouldQuitAfter
                 streamSegueErrorDialog.open()
             }
         }
-    }
-
-    function sessionReadyForDeletion()
-    {
-        // Garbage collect the Session object since it's pretty heavyweight
-        // and keeps other libraries (like SDL_TTF) around until it is deleted.
-        session = null
-        gc()
     }
 
     StackView.onDeactivating: {

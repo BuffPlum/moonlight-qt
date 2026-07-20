@@ -1652,6 +1652,11 @@ Fix the problem, then modify or rename the file to retry.
         <translation>正在启动 %1...</translation>
     </message>
     <message>
+        <location filename="../gui/StreamSegue.qml" line="56"/>
+        <source>Quitting %1...</source>
+        <translation>正在退出 %1...</translation>
+    </message>
+    <message>
         <location filename="../gui/StreamSegue.qml" line="26"/>
         <source>Starting %1 failed: Error %2</source>
         <translation>启动 %1 失败: 错误 %2</translation>
