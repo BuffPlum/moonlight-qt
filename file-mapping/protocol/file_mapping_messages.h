@@ -46,6 +46,7 @@ struct Capability {
 struct RemoteMapping {
     QString id;
     QString displayName;
+    QString volumeLabel;
     QString side;
     QString mode;
     QStringList capabilities;

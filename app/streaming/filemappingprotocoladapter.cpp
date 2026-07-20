@@ -130,6 +130,7 @@ QList<FileMapping::RemoteMapping> mappingsFromHello(const QJsonObject& hello)
             continue;
         }
         mapping.displayName = item.value(QStringLiteral("name")).toString(mapping.id);
+        mapping.volumeLabel = item.value(QStringLiteral("volume_label")).toString();
         mapping.side = item.value(QStringLiteral("side")).toString();
         mapping.mode = item.value(QStringLiteral("mode")).toString();
         mapping.capabilities = stringListFromJson(item.value(QStringLiteral("capabilities")).toArray());

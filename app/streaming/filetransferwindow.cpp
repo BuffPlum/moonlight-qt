@@ -25,6 +25,7 @@
 #include <QPainterPath>
 #include <QSaveFile>
 #include <QScreen>
+#include <QStorageInfo>
 #include <QStyleHints>
 #include <QUrl>
 #include <QUuid>
@@ -54,6 +55,57 @@ constexpr int kColumnHeaderHeight = 30;
 constexpr int kRowHeight = 36;
 constexpr int kIconSize = 22;
 constexpr int kActionCount = 4;
+
+QString driveRootName(QString path)
+{
+    path = QDir::toNativeSeparators(path);
+    while (path.size() > 1 &&
+           (path.endsWith(QLatin1Char('\\')) ||
+            path.endsWith(QLatin1Char('/')))) {
+        path.chop(1);
+    }
+    return path;
+}
+
+QString localDriveDisplayName(const QString& path)
+{
+    const QString rootName = driveRootName(path);
+    const QStorageInfo storage(path);
+    const QString volumeName = storage.name().trimmed();
+    if (volumeName.isEmpty() ||
+        volumeName.compare(rootName, Qt::CaseInsensitive) == 0) {
+        return rootName;
+    }
+    return QStringLiteral("%1 (%2)").arg(volumeName, rootName);
+}
+
+QString remoteDriveDisplayName(const QString& rootName,
+                               const QString& volumeLabel)
+{
+    const QString label = volumeLabel.trimmed();
+    if (label.isEmpty() ||
+        label.compare(rootName, Qt::CaseInsensitive) == 0) {
+        return rootName;
+    }
+    return QStringLiteral("%1 (%2)").arg(label, rootName);
+}
+
+QString remoteDriveRootName(const QString& mappingId,
+                            const QString& displayName)
+{
+    const QString drivePrefix = QStringLiteral("drive-");
+    if (mappingId.startsWith(drivePrefix) &&
+        mappingId.size() == drivePrefix.size() + 1 &&
+        mappingId.back().isLetter()) {
+        return mappingId.back().toUpper() + QStringLiteral(":");
+    }
+
+    const int colon = displayName.lastIndexOf(QLatin1Char(':'));
+    if (colon > 0 && displayName.at(colon - 1).isLetter()) {
+        return displayName.mid(colon - 1, 2).toUpper();
+    }
+    return driveRootName(displayName);
+}
 
 FileMapping::ConflictPolicy conflictPolicyFromValue(int value)
 {
@@ -95,7 +147,8 @@ QImage fileIcon(const QString& path,
     static QHash<QString, QImage> cache;
     QString cacheKey;
     if (drive) {
-        cacheKey = QStringLiteral("drive:%1").arg(name.left(1).toUpper());
+        const QString rootName = driveRootName(path);
+        cacheKey = QStringLiteral("drive:%1").arg(rootName.left(1).toUpper());
     }
     else if (directory) {
         cacheKey = QStringLiteral("folder");
@@ -141,7 +194,7 @@ QImage fileIcon(const QString& path,
 
     QString lookupPath = path;
     if (drive && remote) {
-        lookupPath = name.left(2) + QStringLiteral("\\");
+        lookupPath = driveRootName(path) + QStringLiteral("\\");
     }
     else if (remote) {
         lookupPath = name;
@@ -360,6 +413,7 @@ void FileTransferWorker::initialize()
         QVariantMap item;
         item.insert(QStringLiteral("id"), mapping.id);
         item.insert(QStringLiteral("name"), mapping.displayName);
+        item.insert(QStringLiteral("volumeLabel"), mapping.volumeLabel);
         item.insert(QStringLiteral("writable"),
                     mapping.mode == QStringLiteral("readwrite") &&
                     mapping.capabilities.contains(QStringLiteral("write")));
@@ -1032,8 +1086,8 @@ void FileTransferWindow::loadLocalRoot()
     m_LocalEntries.clear();
     for (const QFileInfo& drive : QDir::drives()) {
         Entry entry;
-        entry.name = QDir::toNativeSeparators(drive.absoluteFilePath());
         entry.path = drive.absoluteFilePath();
+        entry.name = localDriveDisplayName(entry.path);
         entry.directory = true;
         entry.drive = true;
         entry.writable = drive.isWritable();
@@ -1509,8 +1563,10 @@ void FileTransferWindow::saveCurrentRemoteReceiveDirectory()
 
     QString destination;
     if (m_RemoteMappingId.startsWith(QStringLiteral("drive-")) &&
-        m_RemoteMappingName.size() >= 2) {
-        destination = m_RemoteMappingName.left(2) + QStringLiteral("\\") +
+        !m_RemoteMappingName.isEmpty()) {
+        destination = remoteDriveRootName(
+                              m_RemoteMappingId, m_RemoteMappingName) +
+                      QStringLiteral("\\") +
                       QDir::toNativeSeparators(m_RemotePath);
     }
     else {
@@ -1773,9 +1829,14 @@ void FileTransferWindow::onRemoteReady(const QVariantList& mappings, const QStri
     for (const QVariant& value : mappings) {
         const QVariantMap item = value.toMap();
         Entry entry;
-        entry.name = item.value(QStringLiteral("name")).toString();
-        entry.path.clear();
         entry.mappingId = item.value(QStringLiteral("id")).toString();
+        const QString rootName = remoteDriveRootName(
+                entry.mappingId,
+                item.value(QStringLiteral("name")).toString());
+        entry.name = remoteDriveDisplayName(
+                rootName,
+                item.value(QStringLiteral("volumeLabel")).toString());
+        entry.path.clear();
         entry.directory = true;
         entry.drive = true;
         entry.writable = item.value(QStringLiteral("writable")).toBool();
@@ -1783,8 +1844,8 @@ void FileTransferWindow::onRemoteReady(const QVariantList& mappings, const QStri
         // builds that supported upload but intentionally omitted deletion.
         entry.deletable = item.value(QStringLiteral("deletable")).toBool();
         entry.icon = fileIcon(
-                entry.name + QStringLiteral("\\"),
-                entry.name,
+                rootName + QStringLiteral("\\"),
+                rootName,
                 true,
                 true,
                 true);
