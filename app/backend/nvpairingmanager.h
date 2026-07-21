@@ -50,6 +50,9 @@ private:
     QByteArray
     signMessage(const QByteArray& message);
 
+    void
+    cancelPairing();
+
     NvHTTP m_Http;
     X509* m_Cert;
     EVP_PKEY* m_PrivateKey;
