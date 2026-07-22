@@ -15,6 +15,7 @@ struct ProbeState {
     bool pending = false;
     bool available = false;
     bool error = false;
+    bool fullDiskAccess = false;
     QString detail;
     QString message;
     QString diagnosticsPath;

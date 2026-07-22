@@ -1,16 +1,35 @@
-# Moonlight 全盘文件传输 / Full-disk File Transfer
+# Moonlight 文件映射与高级全盘文件管理
 
-This fork provides a two-pane file manager for Foundation Sunshine. It automatically lists all accessible drives on both computers and does not require shared-folder configuration.
+本 fork 会读取 Sunshine capability 并自动选择模式。普通 File Mapping 沿用上游只读 Host Files 流程；只有主机明确声明 BuffPlum 全盘能力时，才启用双栏文件管理、写操作和串流拖放。
 
 ## 为什么做这个功能
 
-我的出发点很简单：在自己的局域网里，两台电脑之间临时传文件时，我不想来回拿 U 盘，也不想先通过 QQ、微信做一次中转。Sunshine 已经能以很高的画质和较低的延迟操控电脑，却没有文件传输功能，所以我很好奇能不能补上这块体验，并最终做成了这个独立维护的版本。
+我的出发点很简单：在自己的局域网里，两台电脑之间临时传文件时，我不想来回拿 U 盘，也不想先通过 QQ、微信做一次中转。最初开始实验时，Sunshine 已经能以很高的画质和较低的延迟操控电脑，却还没有配套的文件传输；现在上游已有只读 File Mapping，本 fork 因而收缩为只维护高级全盘读写差异。
 
-我曾将实现提交给上游讨论。上游考虑到安全风险、测试范围和持续维护成本，没有支持合并该功能，我完全理解这一决定。全盘文件传输并不是一个低风险功能：它让已配对客户端在主机进程权限范围内读写、覆盖和删除文件。因此本实现只在 BuffPlum fork 中维护，面向个人设备与可信局域网，不代表 Moonlight、Foundation Sunshine 或其他上游项目的立场。
+上游现在维护安全、通用的 File Mapping 地基和只读访问路径。本 fork 不再复制这部分，只维护全盘枚举、写操作、冲突策略、双栏 UI 与拖放扩展。全盘文件管理并不是低风险功能：它让已配对客户端在主机进程权限范围内读写、覆盖和删除文件，因此只面向个人设备与可信局域网，不代表 Moonlight、Foundation Sunshine 或其他上游项目的立场。
 
-## 使用方法
+## 模式协商
 
-1. 使用配套 Foundation Sunshine 完成配对并开始串流。
+### 上游兼容只读模式（默认）
+
+- Sunshine capability 返回 `access_mode: read_only`，或者不包含 BuffPlum 全盘特征。
+- 悬浮菜单显示 **Host Files**，使用上游 mapping/VFS/挂载流程访问授权目录。
+- 双栏写入窗口不会打开，串流窗口拖入上传会被拒绝并给出提示。
+
+### BuffPlum 全盘读写模式（实验性）
+
+- Sunshine 必须显式设置 `file_mapping_mode = full_disk`。
+- capability 返回 `access_mode: full_disk` 和 `buffplum_full_disk`；普通 `write_chunks` 特征不会被当作全盘授权。
+- 悬浮菜单的 **Host Files** 打开 BuffPlum 双栏文件管理器。
+- 支持上传、下载、新建、重命名、删除、冲突策略和窗口化串流拖放。
+
+Moonlight 端没有单独的“强制全盘”开关，不能绕过主机策略。主机修改模式后需要重新连接串流。
+
+> 旧版 BuffPlum 主机没有显式全盘 capability。升级客户端后会按安全默认值把它视为只读；需要全盘读写时，请同时升级主机并显式启用 `full_disk`。
+
+## 全盘模式使用方法
+
+1. 在配套 Foundation Sunshine 上显式设置 `file_mapping_mode = full_disk`，重新连接并开始串流。
 2. 按 `Ctrl+Alt+Shift+O`，选择 **文件传输**。
 3. 左侧是运行 Moonlight 的本机，右侧是 Sunshine 主机。
 4. 双击磁盘或目录进入，单击选择一个文件或文件夹。
@@ -32,6 +51,7 @@ This fork provides a two-pane file manager for Foundation Sunshine. It automatic
 
 ## 规则与限制
 
+- 默认 `read_only` 模式不会启用下面的全盘写入行为。
 - 主机磁盘由 Sunshine 动态枚举，通常显示为 `C:`、`D:`、`E:` 等。
 - 上传使用 256 KiB JSON/Base64 分块，主机端使用临时文件完成后原子提交。
 - 下载先写客户端临时文件，完整接收后才提交。

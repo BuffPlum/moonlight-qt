@@ -363,6 +363,7 @@ private:
     QString m_FileMappingDetail;
     QString m_FileMappingToast;
     bool m_FileMappingToastPending;
+    bool m_FileMappingFullDiskAccess;
     std::shared_ptr<FileMappingUx::ProbeState> m_FileMappingProbeState;
     std::shared_ptr<FileMappingUx::MountState> m_FileMappingMountState;
     std::shared_ptr<FileMappingTransfer::State> m_FileMappingTransferState;

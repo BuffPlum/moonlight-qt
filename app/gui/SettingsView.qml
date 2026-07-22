@@ -2061,6 +2061,13 @@ Flickable {
 
                 Label {
                     width: parent.width
+                    text: qsTr("These options apply only when the host explicitly enables BuffPlum full-disk mode. The default Host Files mode remains read-only and ignores them.")
+                    color: "#9ecbff"
+                    wrapMode: Text.Wrap
+                }
+
+                Label {
+                    width: parent.width
                     text: qsTr("Host receive directory for files dropped onto a windowed stream")
                     font.pointSize: 12
                     wrapMode: Text.Wrap

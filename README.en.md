@@ -6,11 +6,11 @@
 [![Downloads](https://img.shields.io/github/downloads/BuffPlum/moonlight-qt/total)](https://github.com/BuffPlum/moonlight-qt/releases)
 
 > [!WARNING]
-> **This is an unofficial version independently maintained by BuffPlum.** It is not supported by the Moonlight or Foundation Sunshine upstream projects. Full-disk file transfer lets a paired client access every drive readable by the Sunshine process. Use it only between personal devices on a trusted local network, and read the [security notice](SECURITY.md) before installing it.
+> **This is an unofficial version independently maintained by BuffPlum.** File access defaults to upstream-compatible, explicitly authorized read-only mappings. The two-pane write, delete, and stream-drop UI is enabled only when the host explicitly advertises BuffPlum full-disk mode. Use that experimental mode only between personal devices on a trusted local network, and read the [security notice](SECURITY.md) before installing it.
 
 This is a downstream desktop client fork based on [moonlight-stream/moonlight-qt](https://github.com/moonlight-stream/moonlight-qt), designed to work closely with [BuffPlum/foundation-sunshine](https://github.com/BuffPlum/foundation-sunshine).
 
-The fork remains compatible with upstream Moonlight and standard Sunshine hosts, while improving the Foundation Sunshine desktop experience with clearer capability negotiation, finer quality/performance controls, and more efficient in-stream actions.
+The fork remains compatible with upstream Moonlight and standard Sunshine hosts. It is positioned as an experimental advanced full-disk file manager for trusted local networks: common read-only File Mapping behavior follows upstream, while BuffPlum maintains only full-disk enumeration, writes, conflict policies, the two-pane UI, and drag-and-drop extensions.
 
 ## Downloads
 
@@ -32,7 +32,7 @@ You can use it like a regular Moonlight client, or pair it with a Foundation Sun
 - **High-quality microphone forwarding**: uses the microphone extension in `moonlight-common-c` for continuous audio input and multichannel scenarios.
 - **Remote resolution decoupling**: stream resolution can be independent from the local display resolution, with custom remote resolution and frame-rate controls.
 - **AppView display control**: supports target display selection, virtual display groups, remote resolution, and remote frame-rate preferences so the client and Foundation Sunshine share the same display intent.
-- **Full-disk bidirectional file transfer**: browses all drives accessible to the paired host and client, transfers files or directories in either direction, and refuses to overwrite existing destinations by default.
+- **Experimental advanced full-disk file manager**: defaults to upstream-compatible read-only Host Files; when the host explicitly advertises BuffPlum full-disk mode, it adds bidirectional transfer, conflict handling, file operations, a two-pane UI, and stream-window drops.
 
 ### Quality And Performance
 

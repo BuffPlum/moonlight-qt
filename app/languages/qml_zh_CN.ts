@@ -660,6 +660,22 @@ Fix the problem, then modify or rename the file to retry.
         <source>Sent %1 to %2.</source>
         <translation>已将 %1 发送到 %2。</translation>
     </message>
+    <message>
+        <source>Full disk</source>
+        <translation>全盘</translation>
+    </message>
+    <message>
+        <source>Read-only</source>
+        <translation>只读</translation>
+    </message>
+    <message>
+        <source>BuffPlum full-disk read/write mode is enabled for this host.</source>
+        <translation>此主机已启用 BuffPlum 全盘读写模式。</translation>
+    </message>
+    <message>
+        <source>Host shared folders are ready in upstream-compatible read-only mode.</source>
+        <translation>主机共享目录已按上游兼容只读模式就绪。</translation>
+    </message>
 </context>
 <context>
     <name>QPlatformTheme</name>
@@ -919,6 +935,22 @@ Fix the problem, then modify or rename the file to retry.
     <message>
         <source>Added dropped item to the file transfer queue.</source>
         <translation>已将拖入项目加入文件传输队列。</translation>
+    </message>
+    <message>
+        <source>Opening BuffPlum file manager...</source>
+        <translation>正在打开 BuffPlum 文件管理器...</translation>
+    </message>
+    <message>
+        <source>Opening read-only host files...</source>
+        <translation>正在打开只读主机文件...</translation>
+    </message>
+    <message>
+        <source>Full-disk read/write mode is not enabled on this host. Use Host Files for read-only shared folders.</source>
+        <translation>此主机未启用全盘读写模式。请通过“主机文件”访问只读共享目录。</translation>
+    </message>
+    <message>
+        <source>Stream-window file drop requires BuffPlum full-disk read/write mode on the host.</source>
+        <translation>向串流窗口拖放文件需要主机启用 BuffPlum 全盘读写模式。</translation>
     </message>
 </context>
 <context>
@@ -1636,6 +1668,10 @@ Fix the problem, then modify or rename the file to retry.
     <message>
         <source>Warning: Full-disk transfer, overwrite, and delete operations are intended only for trusted local networks and paired devices.</source>
         <translation>警告：全盘传输、覆盖和删除操作仅适用于可信局域网和已配对的自有设备。</translation>
+    </message>
+    <message>
+        <source>These options apply only when the host explicitly enables BuffPlum full-disk mode. The default Host Files mode remains read-only and ignores them.</source>
+        <translation>这些选项仅在主机显式启用 BuffPlum 全盘模式时生效。默认的“主机文件”模式保持只读，并忽略这些选项。</translation>
     </message>
 </context>
 <context>

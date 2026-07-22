@@ -62,6 +62,12 @@ FileMapping::Capability convertCapability(const FileMappingClient::Capability& s
     out.sessionUrl = source.sessionUrl;
     out.sessionToken = source.sessionToken;
     out.clientUuid = source.clientUuid;
+    out.accessMode = source.accessMode;
+    for (const QJsonValue& feature : source.features) {
+        if (feature.isString()) {
+            out.features.append(feature.toString());
+        }
+    }
     out.error = mapRpcError(source.error);
     if (!source.ok && out.error.ok()) {
         out.error = makeError(FileMapping::ErrorKind::Unavailable, QStringLiteral("File mapping capability is unavailable"));
@@ -165,6 +171,10 @@ FileMapping::Error FileMappingProtocolAdapter::connectSession(const FileMapping:
     legacyCapability.sessionUrl = capability.sessionUrl;
     legacyCapability.sessionToken = capability.sessionToken;
     legacyCapability.clientUuid = capability.clientUuid;
+    legacyCapability.accessMode = capability.accessMode;
+    for (const QString& feature : capability.features) {
+        legacyCapability.features.append(feature);
+    }
     legacyCapability.error = capability.error.message;
 
     QString error;

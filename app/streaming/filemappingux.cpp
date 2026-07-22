@@ -51,6 +51,7 @@ public:
 
         bool available = false;
         bool error = false;
+        bool fullDiskAccess = false;
         QString detail;
         QString message;
 
@@ -81,18 +82,23 @@ public:
         }
         else {
             available = true;
-            detail = QObject::tr("Ready");
-            message = QObject::tr("Host drives are ready for file transfer.");
+            fullDiskAccess = capability.supportsFullDiskAccess();
+            detail = fullDiskAccess ? QObject::tr("Full disk") : QObject::tr("Read-only");
+            message = fullDiskAccess
+                    ? QObject::tr("BuffPlum full-disk read/write mode is enabled for this host.")
+                    : QObject::tr("Host shared folders are ready in upstream-compatible read-only mode.");
         }
 
         diagnosticsPath = FileMappingUx::appendDiagnostic(
                 QStringLiteral("ux_probe.result"),
-                QStringLiteral("ok=%1 enabled=%2 listening=%3 port=%4 token=%5 detail=%6 message=%7")
+                QStringLiteral("ok=%1 enabled=%2 listening=%3 port=%4 token=%5 access_mode=%6 full_disk=%7 detail=%8 message=%9")
                         .arg(capability.ok ? QStringLiteral("true") : QStringLiteral("false"),
                              capability.enabled ? QStringLiteral("true") : QStringLiteral("false"),
                              capability.listening ? QStringLiteral("true") : QStringLiteral("false"))
                         .arg(capability.port)
-                        .arg(capability.sessionToken.isEmpty() ? QStringLiteral("missing") : QStringLiteral("present"),
+                        .arg(capability.sessionToken.isEmpty() ? QStringLiteral("missing") : QStringLiteral("present"))
+                        .arg(capability.accessMode,
+                             fullDiskAccess ? QStringLiteral("true") : QStringLiteral("false"),
                              detail,
                              message),
                 m_Computer.uuid,
@@ -102,6 +108,7 @@ public:
         m_State->pending = true;
         m_State->available = available;
         m_State->error = error;
+        m_State->fullDiskAccess = fullDiskAccess;
         m_State->detail = detail;
         m_State->message = message;
         m_State->diagnosticsPath = diagnosticsPath;

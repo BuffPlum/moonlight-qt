@@ -40,7 +40,15 @@ struct Capability {
     QString sessionUrl;
     QString sessionToken;
     QString clientUuid;
+    QString accessMode;
+    QStringList features;
     Error error;
+
+    bool supportsFullDiskAccess() const
+    {
+        return accessMode == QStringLiteral("full_disk") ||
+                features.contains(QStringLiteral("buffplum_full_disk"));
+    }
 };
 
 struct RemoteMapping {

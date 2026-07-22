@@ -858,6 +858,7 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_FileMappingDetail(tr("Checking")),
       m_FileMappingToast(),
       m_FileMappingToastPending(false),
+      m_FileMappingFullDiskAccess(false),
       m_FileMappingProbeState(nullptr),
       m_FileMappingMountState(nullptr),
       m_FileMappingTransferState(nullptr),
@@ -2040,13 +2041,23 @@ void Session::dispatchQtMenuAction(OverlayMenuPanel::MenuAction action)
         else if (m_FileMappingState == OverlayMenuPanel::FileMappingState::Mounting) {
             showStreamingToast(tr("Preparing host files..."), 2000);
         }
-        else if (m_FileMappingState == OverlayMenuPanel::FileMappingState::Open &&
-                 m_FileTransferWindow != nullptr) {
-            m_FileTransferWindow->showAndActivate();
-            showStreamingToast(tr("Opening file transfer..."), 1500);
+        else if (m_FileMappingState == OverlayMenuPanel::FileMappingState::Open) {
+            if (m_FileMappingFullDiskAccess && m_FileTransferWindow != nullptr) {
+                m_FileTransferWindow->showAndActivate();
+                showStreamingToast(tr("Opening BuffPlum file manager..."), 1500);
+            }
+            else if (!m_FileMappingMountPath.isEmpty()) {
+                openFileMappingMountPath();
+                showStreamingToast(tr("Opening read-only host files..."), 1500);
+            }
         }
         else if (m_FileMappingState == OverlayMenuPanel::FileMappingState::Available) {
-            openFileTransferWindow();
+            if (m_FileMappingFullDiskAccess) {
+                openFileTransferWindow();
+            }
+            else {
+                startFileMappingMount();
+            }
         }
         else if (m_FileMappingState == OverlayMenuPanel::FileMappingState::Error ||
                  m_FileMappingState == OverlayMenuPanel::FileMappingState::Unavailable) {
@@ -2176,6 +2187,12 @@ void Session::showStreamingToast(const QString& message, int durationMs)
 
 void Session::openFileTransferWindow()
 {
+    if (!m_FileMappingFullDiskAccess) {
+        showStreamingToast(
+                tr("Full-disk read/write mode is not enabled on this host. Use Host Files for read-only shared folders."),
+                4000);
+        return;
+    }
     if (m_FileTransferWindow != nullptr) {
         m_FileTransferWindow->showAndActivate();
         return;
@@ -2208,6 +2225,12 @@ void Session::handleStreamWindowFileDrop(const QString& localPath)
         return;
     }
     if (localPath.isEmpty()) {
+        return;
+    }
+    if (!m_FileMappingFullDiskAccess) {
+        showStreamingToast(
+                tr("Stream-window file drop requires BuffPlum full-disk read/write mode on the host."),
+                4000);
         return;
     }
     if (m_FileMappingState == OverlayMenuPanel::FileMappingState::Unavailable ||
@@ -2462,6 +2485,7 @@ void Session::startFileMappingUxProbe()
     m_FileMappingDetail = tr("Checking");
     m_FileMappingToast = tr("Checking host file transfer...");
     m_FileMappingToastPending = false;
+    m_FileMappingFullDiskAccess = false;
     updateFileMappingMenuState();
 
     if (m_Computer == nullptr) {
@@ -2497,6 +2521,7 @@ void Session::processFileMappingUxProbeResult()
 
     bool available = false;
     bool error = false;
+    bool fullDiskAccess = false;
     QString detail;
     QString message;
     QString diagnosticsPath;
@@ -2508,6 +2533,7 @@ void Session::processFileMappingUxProbeResult()
         m_FileMappingProbeState->pending = false;
         available = m_FileMappingProbeState->available;
         error = m_FileMappingProbeState->error;
+        fullDiskAccess = m_FileMappingProbeState->fullDiskAccess;
         detail = m_FileMappingProbeState->detail;
         message = m_FileMappingProbeState->message;
         diagnosticsPath = m_FileMappingProbeState->diagnosticsPath;
@@ -2519,11 +2545,13 @@ void Session::processFileMappingUxProbeResult()
     m_FileMappingDetail = detail;
     m_FileMappingToast = message;
     m_FileMappingToastPending = available;
+    m_FileMappingFullDiskAccess = available && fullDiskAccess;
     updateFileMappingMenuState();
 
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "File mapping UX probe: state=%d detail=%s message=%s diagnostics=%s",
+                "File mapping UX probe: state=%d full_disk=%d detail=%s message=%s diagnostics=%s",
                 static_cast<int>(m_FileMappingState),
+                m_FileMappingFullDiskAccess ? 1 : 0,
                 m_FileMappingDetail.toUtf8().constData(),
                 m_FileMappingToast.toUtf8().constData(),
                 diagnosticsPath.toUtf8().constData());
@@ -2613,6 +2641,7 @@ void Session::processFileMappingMountResult()
         diagnosticsPath = m_FileMappingMountState->diagnosticsPath;
     }
     m_FileMappingMountState.reset();
+    m_FileMappingFullDiskAccess = false;
 
     appendFileMappingDiagnostic(
             QStringLiteral("mount.result"),
@@ -2687,6 +2716,7 @@ void Session::cleanupFileMappingMount()
             m_Computer ? m_Computer->uuid : QString(),
             m_FileMappingSessionId);
     m_FileMappingMountState.reset();
+    m_FileMappingFullDiskAccess = false;
     if (m_FileTransferWindow != nullptr) {
         m_FileTransferWindow->close();
         delete m_FileTransferWindow;

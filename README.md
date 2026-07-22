@@ -6,11 +6,11 @@
 [![Downloads](https://img.shields.io/github/downloads/BuffPlum/moonlight-qt/total)](https://github.com/BuffPlum/moonlight-qt/releases)
 
 > [!WARNING]
-> **这是 BuffPlum 独立维护的非官方版本。** 它不由 Moonlight 或 Foundation Sunshine 上游提供支持。全盘文件传输会让已配对客户端访问 Sunshine 进程能够读取的全部磁盘，仅建议在可信局域网和个人设备间使用。安装前请阅读 [安全说明](SECURITY.md)。
+> **这是 BuffPlum 独立维护的非官方版本。** 文件访问默认保持上游兼容，只打开主机明确授权的只读 mapping。只有主机显式启用 BuffPlum 全盘模式后，客户端才会开启双栏写入、删除和串流拖放；该实验能力仅建议在可信局域网和个人设备间使用。安装前请阅读 [安全说明](SECURITY.md)。
 
 这是基于 [moonlight-stream/moonlight-qt](https://github.com/moonlight-stream/moonlight-qt) 维护的下游客户端 fork，主要搭配 [BuffPlum/foundation-sunshine](https://github.com/BuffPlum/foundation-sunshine) 使用。
 
-本项目继续兼容上游 Moonlight / 标准 Sunshine，同时进一步完善 Foundation Sunshine 的客户端体验：能力协商更明确，画质与性能控制更细，串流中的常用操作效率更高。
+本项目继续兼容上游 Moonlight / 标准 Sunshine，同时定位为可信局域网下的高级全盘文件管理实验版：通用只读 File Mapping 行为跟随上游，BuffPlum 只维护全盘枚举、写操作、冲突策略、双栏 UI 与拖放这层差异。
 
 ## 下载
 
@@ -34,7 +34,7 @@
 - **高品质麦克风**：基于 `moonlight-common-c` 的麦克风扩展，支持持续音频输入链路和多声道场景。
 - **远程分辨率解耦**：允许串流分辨率独立于本地显示器分辨率，并支持自定义远程分辨率和帧率。
 - **AppView 显示控制**：支持目标显示器、虚拟屏组合、远程分辨率和远程帧率选择，让客户端和 Foundation Sunshine 对齐同一套显示意图。
-- **全盘双向文件传输**：配套 Foundation Sunshine 自动显示两台电脑的所有可访问磁盘，支持窗口化串流直接拖入、双栏文件管理、同名保留/覆盖以及新建、重命名和删除；详见[动机、使用与风险说明](docs/file-transfer.md)。
+- **高级全盘文件管理（实验性、由主机显式启用）**：默认使用上游兼容的只读 Host Files；增强模式自动显示磁盘，支持窗口化串流直接拖入、双栏文件管理、同名保留/覆盖以及新建、重命名和删除；详见[模式、使用与风险说明](docs/file-transfer.md)。
 
 ### 画质与性能
 

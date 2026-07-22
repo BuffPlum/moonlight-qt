@@ -28,8 +28,11 @@ public:
         QString sessionUrl;
         QString sessionToken;
         QString clientUuid;
+        QString accessMode;
         QJsonArray features;
         QString error;
+
+        bool supportsFullDiskAccess() const;
     };
 
     struct SmokeResult {

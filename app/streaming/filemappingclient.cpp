@@ -116,9 +116,24 @@ FileMappingClient::Capability FileMappingClient::fetchCapability(int timeoutMs)
     capability.sessionUrl = body.value(QStringLiteral("session_url")).toString();
     capability.sessionToken = body.value(QStringLiteral("session_token")).toString();
     capability.clientUuid = body.value(QStringLiteral("client_uuid")).toString();
+    capability.accessMode = body.value(QStringLiteral("access_mode")).toString(QStringLiteral("read_only"));
     capability.features = body.value(QStringLiteral("features")).toArray();
     capability.error = body.value(QStringLiteral("error")).toString();
     return capability;
+}
+
+bool FileMappingClient::Capability::supportsFullDiskAccess() const
+{
+    if (accessMode == QStringLiteral("full_disk")) {
+        return true;
+    }
+
+    for (const QJsonValue& feature : features) {
+        if (feature.toString() == QStringLiteral("buffplum_full_disk")) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool FileMappingClient::connectSession(const Capability& capability, int timeoutMs, QString* error)
