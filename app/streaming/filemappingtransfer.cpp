@@ -5,6 +5,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
@@ -254,7 +255,8 @@ public:
 
         while (!stopRequested(m_State)) {
             if (!client) {
-                client = std::make_unique<FileMappingProtocolAdapter>(m_Computer);
+                client = std::make_unique<FileMappingProtocolAdapter>(
+                        m_Computer, &m_State->stopRequested);
                 const FileMapping::Capability capability = client->fetchCapability(m_TimeoutMs);
                 if (!capability.error.ok()) {
                     publishEvent(m_State, QObject::tr("File transfer is waiting for the host: %1")
@@ -440,17 +442,31 @@ void start(NvComputer computer,
             new TransferTask(std::move(computer), std::move(mirrorRoot), std::move(state), timeoutMs));
 }
 
-void stopAndWait(const std::shared_ptr<State>& state, int timeoutMs)
+bool stopAndWait(const std::shared_ptr<State>& state, int timeoutMs)
 {
     if (!state) {
-        return;
+        return true;
     }
 
     state->stopRequested.store(true, std::memory_order_relaxed);
     QMutexLocker locker(&state->lock);
-    if (!state->finished) {
-        state->finishedCondition.wait(&state->lock, timeoutMs);
+    if (timeoutMs < 0) {
+        while (!state->finished) {
+            state->finishedCondition.wait(&state->lock);
+        }
+        return true;
     }
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!state->finished) {
+        const int remaining = timeoutMs - static_cast<int>(elapsed.elapsed());
+        if (remaining <= 0 ||
+                !state->finishedCondition.wait(&state->lock, remaining)) {
+            return state->finished;
+        }
+    }
+    return true;
 }
 
 } // namespace FileMappingTransfer

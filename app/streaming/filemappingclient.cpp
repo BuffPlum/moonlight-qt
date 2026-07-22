@@ -4,6 +4,7 @@
 #include "filemappingwebsocket.h"
 
 #include <QCryptographicHash>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QJsonDocument>
 #include <QNetworkReply>
@@ -14,6 +15,8 @@
 #include <QUrlQuery>
 
 namespace {
+constexpr int kCancellationPollMs = 50;
+
 QString compactJsonForLog(const QJsonObject& object)
 {
     return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
@@ -42,9 +45,12 @@ QString clientUuid()
 }
 } // namespace
 
-FileMappingClient::FileMappingClient(NvComputer* computer, QObject* parent)
+FileMappingClient::FileMappingClient(NvComputer* computer,
+                                     const std::atomic_bool* cancelRequested,
+                                     QObject* parent)
     : QObject(parent),
-      m_Computer(computer)
+      m_Computer(computer),
+      m_CancelRequested(cancelRequested)
 {
 }
 
@@ -56,6 +62,10 @@ FileMappingClient::~FileMappingClient()
 FileMappingClient::Capability FileMappingClient::fetchCapability(int timeoutMs)
 {
     Capability capability;
+    if (cancellationRequested()) {
+        capability.error = tr("File mapping request was cancelled");
+        return capability;
+    }
     QUrl url;
     if (!buildCapabilityUrl(url)) {
         capability.error = tr("Missing host address, HTTPS port, certificate, or UUID");
@@ -68,18 +78,39 @@ FileMappingClient::Capability FileMappingClient::fetchCapability(int timeoutMs)
 
     QEventLoop loop;
     QTimer timer;
+    QTimer cancellationTimer;
+    bool timedOut = false;
+    bool cancelled = false;
     timer.setSingleShot(true);
     QNetworkReply* reply = nam()->get(request);
     connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    connect(&timer, &QTimer::timeout, &loop, [&]() {
+        timedOut = true;
+        reply->abort();
+        loop.quit();
+    });
+    if (m_CancelRequested != nullptr) {
+        cancellationTimer.setInterval(kCancellationPollMs);
+        connect(&cancellationTimer, &QTimer::timeout, &loop, [&]() {
+            if (cancellationRequested()) {
+                cancelled = true;
+                reply->abort();
+                loop.quit();
+            }
+        });
+        cancellationTimer.start();
+    }
     timer.start(timeoutMs);
     loop.exec();
 
-    if (timer.isActive()) {
-        timer.stop();
+    timer.stop();
+    cancellationTimer.stop();
+    if (cancelled) {
+        capability.error = tr("File mapping request was cancelled");
+        delete reply;
+        return capability;
     }
-    else {
-        reply->abort();
+    if (timedOut) {
         capability.error = tr("Timed out while fetching file mapping capability");
         delete reply;
         return capability;
@@ -138,6 +169,12 @@ bool FileMappingClient::Capability::supportsFullDiskAccess() const
 
 bool FileMappingClient::connectSession(const Capability& capability, int timeoutMs, QString* error)
 {
+    if (cancellationRequested()) {
+        if (error != nullptr) {
+            *error = tr("File mapping request was cancelled");
+        }
+        return false;
+    }
     if (!capability.ok || !capability.enabled || !capability.listening) {
         if (error != nullptr) {
             *error = tr("File mapping capability is unavailable: ok=%1 enabled=%2 listening=%3 port=%4 error=%5")
@@ -168,9 +205,13 @@ bool FileMappingClient::connectSession(const Capability& capability, int timeout
     });
 
     m_Socket->connectToHostEncrypted(sessionUrl.host(), static_cast<quint16>(sessionUrl.port(443)));
-    if (!m_Socket->waitForEncrypted(timeoutMs)) {
+    if (!waitForEncrypted(timeoutMs)) {
         if (error != nullptr) {
-            *error = m_Socket->errorString().isEmpty() ? tr("Timed out while opening file mapping TLS connection") : m_Socket->errorString();
+            *error = cancellationRequested()
+                    ? tr("File mapping request was cancelled")
+                    : m_Socket->errorString().isEmpty()
+                            ? tr("Timed out while opening file mapping TLS connection")
+                            : m_Socket->errorString();
         }
         closeSession();
         return false;
@@ -204,9 +245,13 @@ bool FileMappingClient::connectSession(const Capability& capability, int timeout
     request += "Sec-WebSocket-Version: 13\r\n";
     request += "\r\n";
 
-    if (m_Socket->write(request) != request.size() || !m_Socket->waitForBytesWritten(timeoutMs)) {
+    if (m_Socket->write(request) != request.size() || !waitForBytesWritten(timeoutMs)) {
         if (error != nullptr) {
-            *error = m_Socket->errorString().isEmpty() ? tr("Failed to write file mapping WebSocket upgrade request") : m_Socket->errorString();
+            *error = cancellationRequested()
+                    ? tr("File mapping request was cancelled")
+                    : m_Socket->errorString().isEmpty()
+                            ? tr("Failed to write file mapping WebSocket upgrade request")
+                            : m_Socket->errorString();
         }
         closeSession();
         return false;
@@ -221,9 +266,13 @@ bool FileMappingClient::connectSession(const Capability& capability, int timeout
             closeSession();
             return false;
         }
-        if (!m_Socket->waitForReadyRead(timeoutMs)) {
+        if (!waitForReadyRead(timeoutMs)) {
             if (error != nullptr) {
-                *error = m_Socket->errorString().isEmpty() ? tr("Timed out waiting for file mapping WebSocket upgrade") : m_Socket->errorString();
+                *error = cancellationRequested()
+                        ? tr("File mapping request was cancelled")
+                        : m_Socket->errorString().isEmpty()
+                                ? tr("Timed out waiting for file mapping WebSocket upgrade")
+                                : m_Socket->errorString();
             }
             closeSession();
             return false;
@@ -442,6 +491,12 @@ FileMappingClient::SmokeResult FileMappingClient::smokeRead(const QString& mappi
 
 bool FileMappingClient::sendAndWait(const QJsonObject& message, QJsonObject& out, int timeoutMs, QString* error)
 {
+    if (cancellationRequested()) {
+        if (error != nullptr) {
+            *error = tr("File mapping request was cancelled");
+        }
+        return false;
+    }
     if (m_Socket == nullptr) {
         if (error != nullptr) {
             *error = tr("File mapping WebSocket session is not connected");
@@ -455,7 +510,8 @@ bool FileMappingClient::sendAndWait(const QJsonObject& message, QJsonObject& out
         return false;
     }
 
-    QString readError = FileMappingWebSocket::readJsonText(*m_Socket, m_WsBuffer, out, timeoutMs);
+    QString readError = FileMappingWebSocket::readJsonText(
+            *m_Socket, m_WsBuffer, out, timeoutMs, m_CancelRequested);
     if (!readError.isEmpty()) {
         if (error != nullptr) {
             *error = readError;
@@ -499,6 +555,87 @@ void FileMappingClient::closeSession()
         delete m_Socket;
         m_Socket = nullptr;
     }
+}
+
+bool FileMappingClient::cancellationRequested() const
+{
+    return m_CancelRequested != nullptr &&
+           m_CancelRequested->load(std::memory_order_relaxed);
+}
+
+bool FileMappingClient::waitForEncrypted(int timeoutMs)
+{
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (elapsed.elapsed() < timeoutMs) {
+        if (cancellationRequested()) {
+            return false;
+        }
+        if (m_Socket->isEncrypted()) {
+            return true;
+        }
+        const int remaining = timeoutMs - static_cast<int>(elapsed.elapsed());
+        const int waitMs = m_CancelRequested == nullptr
+                ? remaining
+                : qMin(remaining, kCancellationPollMs);
+        if (m_Socket->waitForEncrypted(waitMs)) {
+            return true;
+        }
+        if (m_Socket->state() == QAbstractSocket::UnconnectedState) {
+            return false;
+        }
+    }
+    return false;
+}
+
+bool FileMappingClient::waitForBytesWritten(int timeoutMs)
+{
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (elapsed.elapsed() < timeoutMs) {
+        if (cancellationRequested()) {
+            return false;
+        }
+        if (m_Socket->bytesToWrite() == 0) {
+            return true;
+        }
+        const int remaining = timeoutMs - static_cast<int>(elapsed.elapsed());
+        const int waitMs = m_CancelRequested == nullptr
+                ? remaining
+                : qMin(remaining, kCancellationPollMs);
+        if (m_Socket->waitForBytesWritten(waitMs)) {
+            return true;
+        }
+        if (m_Socket->state() == QAbstractSocket::UnconnectedState) {
+            return false;
+        }
+    }
+    return false;
+}
+
+bool FileMappingClient::waitForReadyRead(int timeoutMs)
+{
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (elapsed.elapsed() < timeoutMs) {
+        if (cancellationRequested()) {
+            return false;
+        }
+        if (m_Socket->bytesAvailable() > 0) {
+            return true;
+        }
+        const int remaining = timeoutMs - static_cast<int>(elapsed.elapsed());
+        const int waitMs = m_CancelRequested == nullptr
+                ? remaining
+                : qMin(remaining, kCancellationPollMs);
+        if (m_Socket->waitForReadyRead(waitMs)) {
+            return true;
+        }
+        if (m_Socket->state() == QAbstractSocket::UnconnectedState) {
+            return false;
+        }
+    }
+    return false;
 }
 
 bool FileMappingClient::buildCapabilityUrl(QUrl& outUrl) const

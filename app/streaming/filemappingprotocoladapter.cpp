@@ -43,6 +43,9 @@ FileMapping::Error mapRpcError(const QString& message)
             message.contains(QStringLiteral("timeout"), Qt::CaseInsensitive)) {
         return makeError(FileMapping::ErrorKind::Timeout, message);
     }
+    if (message.contains(QStringLiteral("cancel"), Qt::CaseInsensitive)) {
+        return makeError(FileMapping::ErrorKind::Cancelled, message);
+    }
     if (message.contains(QStringLiteral("not connected"), Qt::CaseInsensitive) ||
             message.contains(QStringLiteral("network"), Qt::CaseInsensitive) ||
             message.contains(QStringLiteral("WebSocket"), Qt::CaseInsensitive)) {
@@ -146,8 +149,11 @@ QList<FileMapping::RemoteMapping> mappingsFromHello(const QJsonObject& hello)
 }
 } // namespace
 
-FileMappingProtocolAdapter::FileMappingProtocolAdapter(NvComputer computer)
-    : m_Computer(std::move(computer))
+FileMappingProtocolAdapter::FileMappingProtocolAdapter(
+        NvComputer computer,
+        const std::atomic_bool* cancelRequested)
+    : m_Computer(std::move(computer)),
+      m_CancelRequested(cancelRequested)
 {
 }
 
@@ -320,7 +326,7 @@ FileMapping::WriteResult FileMappingProtocolAdapter::write(const QString& mappin
 FileMappingClient& FileMappingProtocolAdapter::client()
 {
     if (!m_Client) {
-        m_Client = std::make_unique<FileMappingClient>(&m_Computer);
+        m_Client = std::make_unique<FileMappingClient>(&m_Computer, m_CancelRequested);
     }
     return *m_Client;
 }

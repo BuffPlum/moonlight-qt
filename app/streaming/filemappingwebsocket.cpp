@@ -1,5 +1,6 @@
 #include "filemappingwebsocket.h"
 
+#include <QElapsedTimer>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QObject>
@@ -8,13 +9,43 @@
 #include <utility>
 
 namespace {
-bool waitForReadyBytes(QSslSocket& socket, QByteArray& buffer, int timeoutMs)
+constexpr int kCancellationPollMs = 50;
+
+bool isCancellationRequested(const std::atomic_bool* cancelRequested)
 {
-    if (!socket.waitForReadyRead(timeoutMs)) {
-        return false;
+    return cancelRequested != nullptr &&
+           cancelRequested->load(std::memory_order_relaxed);
+}
+
+bool waitForReadyBytes(QSslSocket& socket,
+                       QByteArray& buffer,
+                       int timeoutMs,
+                       const std::atomic_bool* cancelRequested)
+{
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (elapsed.elapsed() < timeoutMs) {
+        if (isCancellationRequested(cancelRequested)) {
+            return false;
+        }
+        if (socket.bytesAvailable() > 0) {
+            buffer += socket.readAll();
+            return true;
+        }
+
+        const int remaining = timeoutMs - static_cast<int>(elapsed.elapsed());
+        const int waitMs = cancelRequested == nullptr
+                ? remaining
+                : qMin(remaining, kCancellationPollMs);
+        if (socket.waitForReadyRead(waitMs)) {
+            buffer += socket.readAll();
+            return true;
+        }
+        if (socket.state() == QAbstractSocket::UnconnectedState) {
+            return false;
+        }
     }
-    buffer += socket.readAll();
-    return true;
+    return false;
 }
 
 bool writeMaskedFrame(QSslSocket& socket, quint8 opcode, const QByteArray& payload)
@@ -182,7 +213,11 @@ QString TextMessageReader::read(QByteArray& buffer, QByteArray& out, bool& needM
     }
 }
 
-QString readJsonText(QSslSocket& socket, QByteArray& buffer, QJsonObject& out, int timeoutMs)
+QString readJsonText(QSslSocket& socket,
+                     QByteArray& buffer,
+                     QJsonObject& out,
+                     int timeoutMs,
+                     const std::atomic_bool* cancelRequested)
 {
     TextMessageReader reader;
     QByteArray payload;
@@ -204,7 +239,10 @@ QString readJsonText(QSslSocket& socket, QByteArray& buffer, QJsonObject& out, i
         if (!needMore) {
             break;
         }
-        if (!waitForReadyBytes(socket, buffer, timeoutMs)) {
+        if (!waitForReadyBytes(socket, buffer, timeoutMs, cancelRequested)) {
+            if (isCancellationRequested(cancelRequested)) {
+                return QObject::tr("File mapping request was cancelled");
+            }
             return QObject::tr("Timed out waiting for WebSocket frame");
         }
     }

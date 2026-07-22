@@ -375,12 +375,15 @@ void FileTransferWorker::requestCancel()
 
 bool FileTransferWorker::ensureConnected(QString& error)
 {
+    if (m_Cancelled.load(std::memory_order_relaxed)) {
+        error = tr("The transfer was cancelled.");
+        return false;
+    }
     if (m_Client) {
         return true;
     }
 
-    m_Cancelled.store(false);
-    auto client = std::make_unique<FileMappingProtocolAdapter>(m_Computer);
+    auto client = std::make_unique<FileMappingProtocolAdapter>(m_Computer, &m_Cancelled);
     const FileMapping::Capability capability = client->fetchCapability(kTransferTimeoutMs);
     if (!capability.error.ok()) {
         error = errorMessage(capability.error);
@@ -579,7 +582,6 @@ void FileTransferWorker::upload(const QString& localPath,
         return;
     }
 
-    m_Cancelled.store(false);
     const QFileInfo source(localPath);
     if (!source.exists()) {
         emit transferFinished(
@@ -729,7 +731,6 @@ void FileTransferWorker::download(const QString& mappingId,
         return;
     }
 
-    m_Cancelled.store(false);
     const QString name = QFileInfo(remotePath).fileName();
     QString localPath = QDir(localDirectory).filePath(name);
     bool destinationExisted = QFileInfo::exists(localPath);
@@ -937,7 +938,10 @@ FileTransferWindow::~FileTransferWindow()
         m_Worker->requestCancel();
     }
     m_WorkerThread.quit();
-    m_WorkerThread.wait(15000);
+    // FileTransferWorker owns QObjects with affinity to this thread. Never let
+    // QThread's destructor run until the worker has observed cancellation and
+    // returned from its current slot.
+    m_WorkerThread.wait();
 }
 
 void FileTransferWindow::showAndActivate()

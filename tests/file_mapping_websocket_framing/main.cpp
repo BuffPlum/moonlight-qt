@@ -1,8 +1,12 @@
 #include "streaming/filemappingwebsocket.h"
 
 #include <QCoreApplication>
+#include <QJsonObject>
 #include <QList>
+#include <QSslSocket>
 #include <QTextStream>
+
+#include <atomic>
 
 namespace {
 QByteArray serverFrame(bool fin, quint8 opcode, const QByteArray& payload)
@@ -96,6 +100,20 @@ int main(int argc, char* argv[])
     error = incrementalReader.read(partial, payload, needMore);
     ok &= require(error.isEmpty() && !needMore, QStringLiteral("incremental read failed: %1").arg(error), err);
     ok &= require(payload == R"({"type":"result"})", QStringLiteral("incremental payload mismatch"), err);
+
+    std::atomic_bool cancelRequested { true };
+    QSslSocket cancelledSocket;
+    QByteArray cancelledBuffer;
+    QJsonObject cancelledReply;
+    error = FileMappingWebSocket::readJsonText(
+            cancelledSocket,
+            cancelledBuffer,
+            cancelledReply,
+            10000,
+            &cancelRequested);
+    ok &= require(error.contains(QStringLiteral("cancel"), Qt::CaseInsensitive),
+                  QStringLiteral("cancelled read did not stop immediately: %1").arg(error),
+                  err);
 
     if (!ok) {
         return 1;

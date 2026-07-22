@@ -6,6 +6,8 @@
 #include <QSslSocket>
 #include <QString>
 
+#include <atomic>
+
 namespace FileMappingWebSocket {
 
 constexpr quint64 kMaxMessageBytes = 16ULL * 1024ULL * 1024ULL;
@@ -27,7 +29,11 @@ private:
 };
 
 QString takeFrame(QByteArray& buffer, Frame& frame, bool& needMore);
-QString readJsonText(QSslSocket& socket, QByteArray& buffer, QJsonObject& out, int timeoutMs);
+QString readJsonText(QSslSocket& socket,
+                     QByteArray& buffer,
+                     QJsonObject& out,
+                     int timeoutMs,
+                     const std::atomic_bool* cancelRequested = nullptr);
 bool writeText(QSslSocket& socket, const QByteArray& payload);
 bool writePong(QSslSocket& socket, const QByteArray& payload);
 

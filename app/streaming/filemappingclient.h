@@ -12,6 +12,8 @@
 #include <QString>
 #include <QUrl>
 
+#include <atomic>
+
 class QSslSocket;
 
 class FileMappingClient : public QObject
@@ -49,7 +51,9 @@ public:
         QJsonObject reply;
     };
 
-    explicit FileMappingClient(NvComputer* computer, QObject* parent = nullptr);
+    explicit FileMappingClient(NvComputer* computer,
+                               const std::atomic_bool* cancelRequested = nullptr,
+                               QObject* parent = nullptr);
     ~FileMappingClient() override;
 
     Capability fetchCapability(int timeoutMs = 3000);
@@ -99,8 +103,13 @@ private:
     QNetworkAccessManager* nam();
     QSslConfiguration sslConfiguration() const;
     bool isPinnedCertificateError(const QList<QSslError>& errors) const;
+    bool cancellationRequested() const;
+    bool waitForEncrypted(int timeoutMs);
+    bool waitForBytesWritten(int timeoutMs);
+    bool waitForReadyRead(int timeoutMs);
 
     NvComputer* m_Computer;
+    const std::atomic_bool* m_CancelRequested;
     QNetworkAccessManager* m_Nam = nullptr;
     QSslSocket* m_Socket = nullptr;
     QByteArray m_WsBuffer;

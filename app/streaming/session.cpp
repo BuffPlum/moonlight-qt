@@ -2715,6 +2715,21 @@ void Session::cleanupFileMappingMount()
             QStringLiteral("mount_path=%1").arg(m_FileMappingMountPath),
             m_Computer ? m_Computer->uuid : QString(),
             m_FileMappingSessionId);
+    if (!FileMappingUx::stopMountAndWait(m_FileMappingMountState)) {
+        appendFileMappingDiagnostic(
+                QStringLiteral("mount.cleanup.mount_wait_extended"),
+                QStringLiteral("mount_path=%1").arg(m_FileMappingMountPath),
+                m_Computer ? m_Computer->uuid : QString(),
+                m_FileMappingSessionId);
+        FileMappingUx::stopMountAndWait(m_FileMappingMountState, -1);
+    }
+    QString pendingMountPath;
+    if (m_FileMappingMountState) {
+        QMutexLocker locker(&m_FileMappingMountState->lock);
+        if (m_FileMappingMountState->ok) {
+            pendingMountPath = m_FileMappingMountState->displayPath;
+        }
+    }
     m_FileMappingMountState.reset();
     m_FileMappingFullDiskAccess = false;
     if (m_FileTransferWindow != nullptr) {
@@ -2722,9 +2737,18 @@ void Session::cleanupFileMappingMount()
         delete m_FileTransferWindow;
         m_FileTransferWindow = nullptr;
     }
-    FileMappingTransfer::stopAndWait(m_FileMappingTransferState);
+    if (!FileMappingTransfer::stopAndWait(m_FileMappingTransferState)) {
+        appendFileMappingDiagnostic(
+                QStringLiteral("mount.cleanup.transfer_wait_extended"),
+                QStringLiteral("mount_path=%1").arg(m_FileMappingMountPath),
+                m_Computer ? m_Computer->uuid : QString(),
+                m_FileMappingSessionId);
+        FileMappingTransfer::stopAndWait(m_FileMappingTransferState, -1);
+    }
     m_FileMappingTransferState.reset();
-    const QString mountPath = m_FileMappingMountPath;
+    const QString mountPath = m_FileMappingMountPath.isEmpty()
+            ? pendingMountPath
+            : m_FileMappingMountPath;
     m_FileMappingMountPath.clear();
     if (!mountPath.isEmpty()) {
         const bool generatedMirrorPath = isMoonlightGeneratedFileMappingMirrorPath(mountPath);

@@ -5,7 +5,9 @@
 
 #include <QMutex>
 #include <QString>
+#include <QWaitCondition>
 
+#include <atomic>
 #include <memory>
 
 namespace FileMappingUx {
@@ -22,7 +24,10 @@ struct ProbeState {
 };
 
 struct MountState {
+    std::atomic_bool stopRequested { false };
     QMutex lock;
+    QWaitCondition finishedCondition;
+    bool finished = false;
     bool pending = false;
     bool ok = false;
     QString detail;
@@ -46,5 +51,9 @@ void startMount(NvComputer computer,
                 QString sessionId,
                 std::shared_ptr<MountState> state,
                 int timeoutMs);
+// Stops a pending mount before its provider can outlive the streaming session.
+// A negative timeout waits until the task has completed its provider cleanup.
+bool stopMountAndWait(const std::shared_ptr<MountState>& state,
+                      int timeoutMs = 15000);
 
 } // namespace FileMappingUx

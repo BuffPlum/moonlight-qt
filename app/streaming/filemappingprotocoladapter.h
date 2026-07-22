@@ -3,6 +3,7 @@
 #include "backend/nvcomputer.h"
 #include "protocol/file_mapping_client.h"
 
+#include <atomic>
 #include <memory>
 
 class FileMappingClient;
@@ -10,7 +11,8 @@ class FileMappingClient;
 class FileMappingProtocolAdapter : public FileMapping::ProtocolClient
 {
 public:
-    explicit FileMappingProtocolAdapter(NvComputer computer);
+    explicit FileMappingProtocolAdapter(NvComputer computer,
+                                        const std::atomic_bool* cancelRequested = nullptr);
     ~FileMappingProtocolAdapter() override;
 
     FileMapping::Capability fetchCapability(int timeoutMs) override;
@@ -50,6 +52,7 @@ private:
     FileMappingClient& client();
 
     NvComputer m_Computer;
+    const std::atomic_bool* m_CancelRequested;
     std::unique_ptr<FileMappingClient> m_Client;
     QList<FileMapping::RemoteMapping> m_Mappings;
 };

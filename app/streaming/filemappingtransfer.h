@@ -26,8 +26,9 @@ void start(NvComputer computer,
            std::shared_ptr<State> state,
            int timeoutMs = 10000);
 
-// Network calls use a bounded timeout, so allow enough time for an in-flight
-// request to unwind before the session removes the generated mirror folder.
-void stopAndWait(const std::shared_ptr<State>& state, int timeoutMs = 15000);
+// Returns false if the task did not finish within the requested timeout. A
+// negative timeout waits until completion and is used before deleting paths
+// that may still be referenced by the task.
+bool stopAndWait(const std::shared_ptr<State>& state, int timeoutMs = 15000);
 
 } // namespace FileMappingTransfer

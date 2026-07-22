@@ -84,8 +84,8 @@ private:
                       QString& error);
 
     NvComputer m_Computer;
-    std::unique_ptr<FileMappingProtocolAdapter> m_Client;
     std::atomic_bool m_Cancelled { false };
+    std::unique_ptr<FileMappingProtocolAdapter> m_Client;
 };
 
 class FileTransferWindow : public QRasterWindow

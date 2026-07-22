@@ -9,6 +9,7 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QMutexLocker>
 #include <QObject>
@@ -19,6 +20,25 @@
 #include <utility>
 
 namespace {
+class MountTaskFinishGuard
+{
+public:
+    explicit MountTaskFinishGuard(std::shared_ptr<FileMappingUx::MountState> state)
+        : m_State(std::move(state))
+    {
+    }
+
+    ~MountTaskFinishGuard()
+    {
+        QMutexLocker locker(&m_State->lock);
+        m_State->finished = true;
+        m_State->finishedCondition.wakeAll();
+    }
+
+private:
+    std::shared_ptr<FileMappingUx::MountState> m_State;
+};
+
 QString singleLineDiagnosticValue(QString value)
 {
     value.replace(QLatin1Char('\r'), QLatin1Char(' '));
@@ -136,17 +156,20 @@ public:
 
     virtual void run() override
     {
+        MountTaskFinishGuard finishGuard(m_State);
         bool ok = false;
         QString detail = QObject::tr("Error");
         QString message = QObject::tr("Host files could not be opened.");
         QString displayPath;
+        std::unique_ptr<FileMapping::MountCoordinator> mountCoordinator;
         QString diagnosticsPath = FileMappingUx::appendDiagnostic(
                 QStringLiteral("mount_task.start"),
                 QStringLiteral("timeout_ms=%1").arg(m_TimeoutMs),
                 m_Computer.uuid,
                 m_SessionId);
 
-        auto client = std::make_shared<FileMappingProtocolAdapter>(m_Computer);
+        auto client = std::make_shared<FileMappingProtocolAdapter>(
+                m_Computer, &m_State->stopRequested);
         FileMapping::Capability capability = client->fetchCapability(m_TimeoutMs);
         diagnosticsPath = FileMappingUx::appendDiagnostic(
                 QStringLiteral("mount_task.capability"),
@@ -200,14 +223,18 @@ public:
                     message = QObject::tr("Host files root could not be listed: %1").arg(root.error.message);
                 }
                 else {
-                    FileMapping::MountCoordinator coordinator(FileMapping::createDefaultMountProviders());
+                    if (m_State->stopRequested.load(std::memory_order_relaxed)) {
+                        return;
+                    }
+                    mountCoordinator = std::make_unique<FileMapping::MountCoordinator>(
+                            FileMapping::createDefaultMountProviders());
                     FileMapping::MountRequest request;
                     request.hostUuid = m_Computer.uuid;
                     request.hostName = m_Computer.name;
                     request.sessionId = m_SessionId;
                     request.vfs = vfs;
 
-                    FileMapping::MountResult mount = coordinator.ensureMounted(request);
+                    FileMapping::MountResult mount = mountCoordinator->ensureMounted(request);
                     diagnosticsPath = FileMappingUx::appendDiagnostic(
                             QStringLiteral("mount_task.mount"),
                             QStringLiteral("ok=%1 state=%2 provider=%3 display_path=%4 error=%5 message=%6 diagnostics=%7")
@@ -241,13 +268,22 @@ public:
             }
         }
 
-        QMutexLocker locker(&m_State->lock);
-        m_State->pending = true;
-        m_State->ok = ok;
-        m_State->detail = detail;
-        m_State->message = message;
-        m_State->displayPath = displayPath;
-        m_State->diagnosticsPath = diagnosticsPath;
+        bool cancelled = false;
+        {
+            QMutexLocker locker(&m_State->lock);
+            cancelled = m_State->stopRequested.load(std::memory_order_relaxed);
+            if (!cancelled) {
+                m_State->pending = true;
+                m_State->ok = ok;
+                m_State->detail = detail;
+                m_State->message = message;
+                m_State->displayPath = displayPath;
+                m_State->diagnosticsPath = diagnosticsPath;
+            }
+        }
+        if (cancelled && mountCoordinator) {
+            mountCoordinator->unmount(m_Computer.uuid, m_SessionId);
+        }
     }
 
 private:
@@ -347,6 +383,33 @@ void startMount(NvComputer computer,
                                                        std::move(sessionId),
                                                        std::move(state),
                                                        timeoutMs));
+}
+
+bool stopMountAndWait(const std::shared_ptr<MountState>& state, int timeoutMs)
+{
+    if (!state) {
+        return true;
+    }
+
+    QMutexLocker locker(&state->lock);
+    state->stopRequested.store(true, std::memory_order_relaxed);
+    if (timeoutMs < 0) {
+        while (!state->finished) {
+            state->finishedCondition.wait(&state->lock);
+        }
+        return true;
+    }
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!state->finished) {
+        const int remaining = timeoutMs - static_cast<int>(elapsed.elapsed());
+        if (remaining <= 0 ||
+                !state->finishedCondition.wait(&state->lock, remaining)) {
+            return state->finished;
+        }
+    }
+    return true;
 }
 
 } // namespace FileMappingUx
